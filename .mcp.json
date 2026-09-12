@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "unity": {
+      "type": "stdio",
+      "command": "/Users/manh/.unity/relay/relay_mac_x64.app/Contents/MacOS/relay_mac_x64",
+      "args": [
+        "--mcp"
+      ],
+      "env": {}
+    },
+    "browser": {
+      "type": "stdio",
+      "command": "/Users/manh/.local/node/bin/node",
+      "args": [
+        "/Users/manh/.local/node/lib/node_modules/@playwright/mcp/cli.js",
+        "--browser",
+        "chrome",
+        "--user-data-dir",
+        "/Users/manh/.claude-browser",
+        "--viewport-size",
+        "1280x720",
+        "--blocked-origins",
+        "https://mail.google.com;https://pay.google.com;https://accounts.google.com/b/0/ManageAccount"
+      ],
+      "env": {}
+    }
+  }
+}

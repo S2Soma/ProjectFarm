@@ -1,0 +1,33 @@
+ASSET CREDITS
+=============
+
+assets/farm/  and  assets/ui/
+-----------------------------
+Sliced from Asset1.png and Asset2.png, the two sprite sheets supplied
+by the project owner in Images/. Both sheets already carried a clean
+alpha channel; this project only cut them into named pieces and
+trimmed each to its bounding box. No recolouring or redrawing.
+
+  farm/  4 plot tiles (empty / locked / ready / grown),
+         5 crops x 4 growth stages (pumpkin, corn, tomato, carrot,
+         wheat), and props (fence, lantern fence, signpost, banner,
+         rock, haystack)
+  ui/    HUD chrome (profile bar, coin pill, shop, chest, book,
+         mission ribbon, diamond buttons, farmer portrait) and the
+         six mutated-crop sprites
+
+  Provenance of those two sheets is the owner's to confirm before any
+  public release. They were provided as project input.
+
+assets/crop/
+------------
+Kenney "Food Kit" — Creative Commons CC0 1.0 (public domain).
+  https://kenney.nl/assets/food-kit
+Used for the produce icons of the crops the painted sheet does not
+cover. Previews/*.png, trimmed and upscaled 2x.
+
+Reference screenshots
+---------------------
+Images/Screenshot_*.jpg are screenshots of Garena's "Lien Quan Mobile"
+farm mini-game. They were used only to match LAYOUT and interaction
+design. No pixel from them ships in this project.

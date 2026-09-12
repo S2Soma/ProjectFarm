@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "deny": [
+      "mcp__browser__browser_file_upload"
+    ],
+    "ask": [
+      "mcp__browser__browser_evaluate"
+    ]
+  }
+}
