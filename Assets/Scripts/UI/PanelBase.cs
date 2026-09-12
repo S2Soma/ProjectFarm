@@ -134,7 +134,7 @@ namespace LQFarm
 
         protected static Sprite CoinIcon => Theme.Skin.Coin;
         protected static Sprite XpIcon   => Theme.Skin.StarGold;
-        protected static Sprite LeafIcon => Art.Ui("ic_leaf");
+        protected static Sprite LeafIcon => Theme.Skin.Check;
     }
 
     /// <summary>Fits the single child image inside this rect, preserving aspect.</summary>

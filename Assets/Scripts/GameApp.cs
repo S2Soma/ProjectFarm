@@ -91,7 +91,7 @@ namespace LQFarm
             watcher.onResize = FitFarm;
             FitFarm();
 
-            if (GS.stats.plant == 0 && GS.stats.harvest == 0)
+            if (GS.Local.stats.plant == 0 && GS.Local.stats.harvest == 0)
                 StartCoroutine(FirstHint());
         }
 
@@ -298,7 +298,7 @@ namespace LQFarm
                 foreach (int i in _ticking)
                 {
                     _farm.RenderPlot(i);
-                    if (FarmView.PlotState(GS.plots[i]) != "growing") finished = true;
+                    if (FarmView.PlotState(GS.Viewing.plots[i]) != "growing") finished = true;
                 }
                 if (finished) _tickingDirty = true;
 
@@ -439,7 +439,7 @@ namespace LQFarm
         public void OpenPlot(int i)
         {
             if (_panel != null) return;
-            var p = GS.plots[i];
+            var p = GS.Viewing.plots[i];
             string st = FarmView.PlotState(p);
 
             if (st == "ready") { ClosePlotPopup(); DoHarvest(i); return; }
@@ -525,7 +525,7 @@ namespace LQFarm
 
         void BuildPlantPop(RectTransform pop, int i)
         {
-            var owned = GS.seeds.Where(kv => kv.Value > 0).ToList();
+            var owned = GS.Local.seeds.Where(kv => kv.Value > 0).ToList();
             if (owned.Count == 0)
             {
                 PopTitle(pop, "Chưa có hạt giống", "Ghé cửa hàng để mua thêm");
@@ -620,8 +620,8 @@ namespace LQFarm
 
         void SpeedUp(int i)
         {
-            if (GS.coin < 800) { Toast("Không đủ xu nông trại"); return; }
-            GS.AddCoin(-800);
+            if (GS.Local.coin < 800) { Toast("Không đủ xu nông trại"); return; }
+            GS.Local.AddCoin(-800);
             _farm.InstantGrow(i);
             MarkDirty(); _hud.Render(); GS.Save();
             ClosePlotPopup();
@@ -630,10 +630,10 @@ namespace LQFarm
 
         void BuyPlot(int i)
         {
-            if (GS.coin < 12000) { Toast("Không đủ xu nông trại"); return; }
-            if (GS.UnlockExtraPlot(i))
+            if (GS.Local.coin < 12000) { Toast("Không đủ xu nông trại"); return; }
+            if (GS.Local.UnlockExtraPlot(i))
             {
-                GS.AddCoin(-12000);
+                GS.Local.AddCoin(-12000);
                 _farm.RenderAll(); MarkDirty(); _hud.Render(); GS.Save();
                 Toast("Đã mở khoá ô đất này!");
             }
@@ -668,8 +668,8 @@ namespace LQFarm
             int n = 0;
             for (int i = 0; i < GS.PlotCount; i++)
             {
-                if (FarmView.PlotState(GS.plots[i]) != "empty") continue;
-                var id = GS.seeds.FirstOrDefault(k => k.Value > 0).Key;
+                if (FarmView.PlotState(GS.Viewing.plots[i]) != "empty") continue;
+                var id = GS.Local.seeds.FirstOrDefault(k => k.Value > 0).Key;
                 if (string.IsNullOrEmpty(id)) break;
                 if (_farm.Plant(i, id)) n++;
             }
@@ -683,26 +683,26 @@ namespace LQFarm
 
         public void DoUpgrade()
         {
-            var a = GameData.Level(GS.lv);
-            if (GS.xp < a.xpNeed) { Toast("Chưa đủ kinh nghiệm — hãy thu hoạch thêm!"); return; }
-            if (GS.coin < a.cost) { Toast("Không đủ xu nông trại"); return; }
+            var a = GameData.Level(GS.Local.lv);
+            if (GS.Local.xp < a.xpNeed) { Toast("Chưa đủ kinh nghiệm — hãy thu hoạch thêm!"); return; }
+            if (GS.Local.coin < a.cost) { Toast("Không đủ xu nông trại"); return; }
 
-            int before = GS.MaxPlots;
-            if (!GS.LevelUp()) return;
+            int before = GS.Local.MaxPlots;
+            if (!GS.Local.LevelUp()) return;
 
             _farm.RenderAll(); MarkDirty(); _hud.Render(); RefreshPanel(); GS.Save();
             Tween.Shake(_root, 7f);
 
-            var items = new List<RewardItem> { new RewardItem(Theme.Skin.Farmhouse, "Trang trại cấp " + GS.lv, Theme.GreenDeep) };
-            var unlocked = GameData.Seeds.FirstOrDefault(s => s.lv == GS.lv);
+            var items = new List<RewardItem> { new RewardItem(Theme.Skin.Farmhouse, "Trang trại cấp " + GS.Local.lv, Theme.GreenDeep) };
+            var unlocked = GameData.Seeds.FirstOrDefault(s => s.lv == GS.Local.lv);
             if (unlocked != null) items.Add(new RewardItem(Art.Icon(unlocked.art, 0), unlocked.name));
-            if (GS.MaxPlots > before) items.Add(new RewardItem(Art.TileEmpty, "+1 ô đất"));
+            if (GS.Local.MaxPlots > before) items.Add(new RewardItem(Art.TileEmpty, "+1 ô đất"));
             ShowReward("Nâng cấp thành công!", items);
         }
 
         public void OpenChests(int tier)
         {
-            int n = GS.chests[tier];
+            int n = GS.Local.chests[tier];
             if (n <= 0) { Toast("Bạn chưa có rương loại này"); return; }
 
             float[] mul = { 1f, 2f, 3.5f, 7f };
@@ -714,19 +714,19 @@ namespace LQFarm
             {
                 coin += Mathf.RoundToInt((600f + UnityEngine.Random.value * 1800f) * mul[tier]);
                 bool rare = UnityEngine.Random.value < rareChance[tier];
-                var pool = GameData.Seeds.Where(s => s.lv <= GS.lv + (rare ? 4 : 0) && (rare ? s.r >= 2 : s.r <= 1)).ToList();
+                var pool = GameData.Seeds.Where(s => s.lv <= GS.Local.lv + (rare ? 4 : 0) && (rare ? s.r >= 2 : s.r <= 1)).ToList();
                 if (pool.Count == 0) pool = GameData.Seeds.ToList();
                 var pick = pool[UnityEngine.Random.Range(0, pool.Count)];
                 int qty = rare ? 2 : 3;
-                GS.AddSeed(pick.id, qty);
+                GS.Local.AddSeed(pick.id, qty);
                 got.TryGetValue(pick.id, out int had);
                 got[pick.id] = had + qty;
             }
 
-            GS.chests[tier] = 0;
-            GS.AddCoin(coin);
-            GS.Track("chest", n);
-            GS.AddEnergy(GS.EnergyGain(n * 3));
+            GS.Local.chests[tier] = 0;
+            GS.Local.AddCoin(coin);
+            GS.Local.Track("chest", n);
+            GS.Local.AddEnergy(GS.Local.EnergyGain(n * 3));
             _hud.Render(); RefreshPanel(); GS.Save();
 
             var items = new List<RewardItem> { new RewardItem(Theme.Skin.Coin, "+" + Fmt.N(coin)) };
@@ -740,7 +740,7 @@ namespace LQFarm
 
         public void SellAll()
         {
-            var list = GS.StoreList();
+            var list = GS.Local.StoreList();
             if (list.Count == 0) { Toast("Kho trống"); return; }
 
             long total = 0;
@@ -749,11 +749,11 @@ namespace LQFarm
             {
                 total += (long)it.price * it.n;
                 count += it.n;
-                GS.TrackCrop("sellCrop", it.crop, it.n);
+                GS.Local.TrackCrop("sellCrop", it.crop, it.n);
             }
-            GS.store.Clear();
-            GS.AddCoin((int)Mathf.Min(total, int.MaxValue));
-            GS.Track("sell", count);
+            GS.Local.store.Clear();
+            GS.Local.AddCoin((int)Mathf.Min(total, int.MaxValue));
+            GS.Local.Track("sell", count);
 
             _hud.Render(); RefreshPanel(); GS.Save();
             ShowReward("Bán sỉ thành công", new List<RewardItem>
@@ -767,19 +767,19 @@ namespace LQFarm
         {
             var s = GameData.Get(id);
             if (s == null) return;
-            if (s.lv > GS.lv) { Toast("Chưa mở khoá hạt giống này"); return; }
+            if (s.lv > GS.Local.lv) { Toast("Chưa mở khoá hạt giống này"); return; }
             long cost = (long)s.price * qty;
-            if (GS.coin < cost) { Toast("Không đủ xu nông trại"); return; }
+            if (GS.Local.coin < cost) { Toast("Không đủ xu nông trại"); return; }
 
-            GS.AddCoin(-(int)cost);
-            GS.AddSeed(id, qty);
+            GS.Local.AddCoin(-(int)cost);
+            GS.Local.AddSeed(id, qty);
             _hud.Render(); RefreshPanel(); GS.Save();
             Toast("Đã mua " + qty + " gói " + s.name);
         }
 
         public void ClaimTask(Task t, bool daily)
         {
-            if (!GS.ClaimTask(t, daily)) return;
+            if (!GS.Local.ClaimTask(t, daily)) return;
             _hud.Render(); RefreshPanel(); GS.Save();
             ShowReward("Hoàn thành nhiệm vụ", new List<RewardItem>
             {
@@ -791,21 +791,21 @@ namespace LQFarm
         public void VisitFriend(Friend f, bool suggest)
         {
             if (suggest) { Toast("Đã gửi lời mời kết bạn"); return; }
-            if (GS.visited.Contains(f.id)) { Toast("Hôm nay bạn đã thăm người này rồi"); return; }
-            if (GS.stealLeft <= 0) { Toast("Hết lượt thăm nom hôm nay"); return; }
+            if (GS.Local.visited.Contains(f.id)) { Toast("Hôm nay bạn đã thăm người này rồi"); return; }
+            if (GS.Local.stealLeft <= 0) { Toast("Hết lượt thăm nom hôm nay"); return; }
 
-            GS.visited.Add(f.id);
-            GS.stealLeft--;
+            GS.Local.visited.Add(f.id);
+            GS.Local.stealLeft--;
 
             var pool = GameData.Seeds.Where(s => s.lv <= Mathf.Max(1, f.lv)).ToList();
             var pick = pool.Count > 0 ? pool[UnityEngine.Random.Range(0, pool.Count)] : GameData.Seeds[0];
             int v = UnityEngine.Random.value < 0.25f ? UnityEngine.Random.Range(1, 4) : 0;
             int coin = 400 + UnityEngine.Random.Range(0, 900);
 
-            GS.AddProduce(pick.id, v, 1);
-            GS.AddCoin(coin);
-            GS.AddEnergy(GS.EnergyGain(4));
-            GS.Track("visit", 1);
+            GS.Local.AddProduce(pick.id, v, 1);
+            GS.Local.AddCoin(coin);
+            GS.Local.AddEnergy(GS.Local.EnergyGain(4));
+            GS.Local.Track("visit", 1);
             _hud.Render(); RefreshPanel(); GS.Save();
 
             ShowReward("Thăm nom " + f.name, new List<RewardItem>
@@ -817,33 +817,33 @@ namespace LQFarm
 
         public void BuyShopItem(ShopItem it)
         {
-            if (GS.shopBought.Contains(it.id)) { Toast("Bạn đã mua vật phẩm này"); return; }
-            if (GS.coin < it.price) { Toast("Không đủ xu nông trại"); return; }
-            GS.AddCoin(-it.price);
+            if (GS.Local.shopBought.Contains(it.id)) { Toast("Bạn đã mua vật phẩm này"); return; }
+            if (GS.Local.coin < it.price) { Toast("Không đủ xu nông trại"); return; }
+            GS.Local.AddCoin(-it.price);
 
             var extra = new List<RewardItem>();
             switch (it.effect)
             {
                 case "energy":
-                    GS.AddEnergy(300);
+                    GS.Local.AddEnergy(300);
                     extra.Add(new RewardItem(Theme.Skin.NavMagic, "+300 năng lượng", Theme.Purple));
                     break;
                 case "plot":
-                    GS.UnlockExtraPlot();
+                    GS.Local.UnlockExtraPlot();
                     _farm.RenderAll();
                     extra.Add(new RewardItem(Art.TileEmpty, "+1 ô đất"));
                     break;
                 case "mutate":
-                    GS.buffMutateUntil = GS.Now + 300000;
+                    GS.Local.buffMutateUntil = GS.Now + 300000;
                     extra.Add(new RewardItem(Theme.Skin.StarGold, "+30% đột biến"));
                     break;
                 case "seedbag":
                 {
-                    var pool = GameData.Seeds.Where(s => s.lv <= GS.lv).ToList();
+                    var pool = GameData.Seeds.Where(s => s.lv <= GS.Local.lv).ToList();
                     for (int k = 0; k < 5; k++)
                     {
                         var p = pool.Count > 0 ? pool[UnityEngine.Random.Range(0, pool.Count)] : GameData.Seeds[0];
-                        GS.AddSeed(p.id, 1);
+                        GS.Local.AddSeed(p.id, 1);
                     }
                     extra.Add(new RewardItem(Theme.Skin.NavSeeds, "5 hạt giống", Theme.GreenDeep));
                     break;
@@ -852,7 +852,7 @@ namespace LQFarm
                 {
                     int idx = -1;
                     for (int k = 0; k < GS.PlotCount; k++)
-                        if (!string.IsNullOrEmpty(GS.plots[k].crop) && FarmView.PlotState(GS.plots[k]) != "ready") { idx = k; break; }
+                        if (!string.IsNullOrEmpty(GS.Viewing.plots[k].crop) && FarmView.PlotState(GS.Viewing.plots[k]) != "ready") { idx = k; break; }
                     if (idx >= 0) _farm.InstantGrow(idx);
                     extra.Add(new RewardItem(Theme.Skin.NavMagic, "Chín ngay", Theme.Purple));
                     break;
@@ -861,11 +861,11 @@ namespace LQFarm
                 {
                     int n = 0;
                     for (int k = 0; k < GS.PlotCount && n < 3; k++) if (_farm.Water(k)) n++;
-                    extra.Add(new RewardItem(Art.Ui("ic_can"), "Tưới ×" + n));
+                    extra.Add(new RewardItem(Theme.Skin.Droplet, "Tưới ×" + n));
                     break;
                 }
                 default:
-                    GS.shopBought.Add(it.id);
+                    GS.Local.shopBought.Add(it.id);
                     break;
             }
 
@@ -879,13 +879,13 @@ namespace LQFarm
 
         public void ClaimSet(CollectionSet set)
         {
-            int have = set.items.Count(it => GS.collected.Contains(it.Key));
+            int have = set.items.Count(it => GS.Local.collected.Contains(it.Key));
             if (have < set.items.Length) { Toast("Còn thiếu " + (set.items.Length - have) + " vật phẩm"); return; }
-            if (GS.claimedSets.Contains(set.id)) { Toast("Bạn đã nhận thưởng bộ này"); return; }
+            if (GS.Local.claimedSets.Contains(set.id)) { Toast("Bạn đã nhận thưởng bộ này"); return; }
 
-            GS.claimedSets.Add(set.id);
-            GS.AddCoin(set.coin);
-            GS.AddXp(set.xp);
+            GS.Local.claimedSets.Add(set.id);
+            GS.Local.AddCoin(set.coin);
+            GS.Local.AddXp(set.xp);
             _hud.Render(); RefreshPanel(); GS.Save();
 
             ShowReward("Hoàn thành " + set.name, new List<RewardItem>
@@ -897,26 +897,26 @@ namespace LQFarm
 
         public void ClaimAllMilestones()
         {
-            int total = GS.CollectedCount;
+            int total = GS.Local.CollectedCount;
             int coin = 0, n = 0;
 
             foreach (int m in GameData.CollectMilestones)
-                if (total >= m && GS.claimedMs.Add(m)) { coin += m * 500; n++; }
+                if (total >= m && GS.Local.claimedMs.Add(m)) { coin += m * 500; n++; }
 
             foreach (var set in GameData.Collections)
             {
-                int have = set.items.Count(it => GS.collected.Contains(it.Key));
-                if (have >= set.items.Length && !GS.claimedSets.Contains(set.id))
+                int have = set.items.Count(it => GS.Local.collected.Contains(it.Key));
+                if (have >= set.items.Length && !GS.Local.claimedSets.Contains(set.id))
                 {
-                    GS.claimedSets.Add(set.id);
+                    GS.Local.claimedSets.Add(set.id);
                     coin += set.coin;
-                    GS.AddXp(set.xp);
+                    GS.Local.AddXp(set.xp);
                     n++;
                 }
             }
 
             if (n == 0) { Toast("Chưa có phần thưởng nào để nhận"); return; }
-            GS.AddCoin(coin);
+            GS.Local.AddCoin(coin);
             _hud.Render(); RefreshPanel(); GS.Save();
 
             ShowReward("Nhận thưởng", new List<RewardItem>

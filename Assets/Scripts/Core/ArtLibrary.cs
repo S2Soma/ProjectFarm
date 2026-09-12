@@ -39,6 +39,10 @@ namespace LQFarm
         public static Sprite Ui(string id)   { return Load("Art/ui/" + id); }
 
         // ---- plot tiles ----
+        // Reverted to the original sheet. Tools/gen_tiles.py draws a geometrically exact
+        // replacement, but the painted tiles carry stone texture, moss, scattered flowers
+        // and — critically — the padlock baked into tile_locked. The drawn version lost all
+        // of that and read as flat stickers, so it was a downgrade, not an upgrade.
         public static Sprite TileEmpty   => Farm("tile_empty");
         public static Sprite TileLocked  => Farm("tile_locked");
         public static Sprite TileWatered => Farm("tile_watered");
@@ -69,25 +73,39 @@ namespace LQFarm
             return (v >= 0 && v < Elements.Length) ? Elements[v] : Elements[0];
         }
 
+        /// <summary>Crops drawn for this project, under Resources/Art/crops_gen. Three stages
+        /// each, no per-element artwork — mutations tint them, the same as every crop outside
+        /// the original painted set. Owned art, so these carry no provenance question.</summary>
+        static readonly HashSet<string> Generated = new HashSet<string>
+        { "wheat", "tomato", "corn", "watermelon", "strawberry", "peach" };
+
+        public static bool IsGenerated(string art) { return Generated.Contains(art); }
+
         /// <summary>Crops whose sheet carries all four elements (3 painted stages).</summary>
-        static readonly HashSet<string> Elemental = new HashSet<string> { "wheat", "potato", "tomato" };
+        static readonly HashSet<string> Elemental = new HashSet<string> { "potato" };
         /// <summary>Crops with 4 painted stages but no elemental art.</summary>
-        static readonly HashSet<string> Staged = new HashSet<string> { "pumpkin", "corn", "carrot" };
+        static readonly HashSet<string> Staged = new HashSet<string> { "pumpkin", "carrot" };
 
         public static bool IsElemental(string art) { return Elemental.Contains(art); }
         public static bool IsStaged(string art)    { return Staged.Contains(art); }
-        public static bool IsPainted(string art)   { return IsElemental(art) || IsStaged(art); }
+        public static bool IsPainted(string art)   { return IsElemental(art) || IsStaged(art) || IsGenerated(art); }
 
-        /// <summary>On-screen height per growth stage, in reference pixels.</summary>
-        public static readonly float[] StageHeight = { 46f, 70f, 96f, 116f };
+        /// <summary>On-screen height per growth stage, in reference pixels.
+        ///
+        /// Capped at 78: the bed of the plot directly behind starts at +78.96 (two vertical
+        /// steps up, less its own half-height), so anything taller grows straight through the
+        /// neighbour's soil. The old 96/116 overhung it by 17 and 37px, which is what made
+        /// full-grown bushes look like they were sprawling across other plots.</summary>
+        public static readonly float[] StageHeight = { 44f, 60f, 72f, 78f };
 
         /// <summary>Plant art for a crop at growth stage 0..3 in an element.</summary>
         public static Sprite Plant(string art, int stage, int v)
         {
+            if (IsGenerated(art)) return Load("Art/crops_gen/" + art + "_" + Mathf.Min(stage + 1, 3));
             if (IsElemental(art)) return Farm(art + Elem(v).key + "_" + Mathf.Min(stage + 1, 3));
             if (IsStaged(art))    return Farm(art + "_" + (stage + 1));
             // every other crop borrows the generic bush
-            return Farm("tomato_" + Mathf.Min(stage + 1, 3));
+            return Load("Art/crops_gen/tomato_" + Mathf.Min(stage + 1, 3));
         }
 
         /// <summary>Produce laid on the generic bush when ripe; null for painted crops.</summary>
@@ -96,6 +114,7 @@ namespace LQFarm
         /// <summary>Inventory / shop icon.</summary>
         public static Sprite Icon(string art, int v)
         {
+            if (IsGenerated(art)) return Load("Art/crops_gen/" + art + "_3");
             if (IsElemental(art)) return Farm(art + Elem(v).key + "_3");
             if (IsStaged(art))    return Farm(art + "_4");
             return Crop(art);

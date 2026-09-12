@@ -36,6 +36,15 @@ namespace LQFarm
         RectTransform _plotLayer, _fxLayer, _decoBack, _decoFront;
         public Action<int> onPlotTapped;
 
+        /// <summary>Whose farm this view draws, who is acting on it, and what that is allowed
+        /// to do. Held on the view rather than passed to every call because a view IS a view of
+        /// exactly one farm — but the owner/actor split still happens inside each action, which
+        /// is the part that matters once a friend can water your crops.</summary>
+        public FarmContext Ctx { get; set; } = FarmContext.Own;
+
+        /// <summary>The plots this view draws — always the context owner's, never the actor's.</summary>
+        List<Plot> Plots => Ctx.owner.plots;
+
         class PlotView
         {
             public RectTransform root;
@@ -139,7 +148,7 @@ namespace LQFarm
                 var bFace = UIKit.Img(v.badge, Theme.Circle(), Theme.Amber, "face");
                 bFace.rectTransform.Stretch();
                 UIKit.Img(v.badge, Theme.Ring(0.12f), new Color(1, 1, 1, 0.8f), "ring").rectTransform.Stretch(3, 3, 3, 3);
-                var bIcon = UIKit.Img(v.badge, Art.Ui("ic_leaf"), Color.white, "ic");
+                var bIcon = UIKit.Img(v.badge, Theme.Skin.Check, Color.white, "ic");
                 bIcon.preserveAspect = true;
                 bIcon.rectTransform.Stretch(8, 8, 8, 8);
                 var bob = v.badge.gameObject.AddComponent<Bobber>();
@@ -158,7 +167,7 @@ namespace LQFarm
                 // "needs water" hint
                 v.waterMark = UIKit.Node("dry", root);
                 v.waterMark.Anchor(UIKit.Center, new Vector2(76, -8), new Vector2(34, 34));
-                var wIcon = UIKit.Img(v.waterMark, Art.Ui("ic_can"), new Color(1, 1, 1, 0.95f), "ic");
+                var wIcon = UIKit.Img(v.waterMark, Theme.Skin.Droplet, new Color(1, 1, 1, 0.95f), "ic");
                 wIcon.preserveAspect = true;
                 wIcon.rectTransform.Stretch();
                 v.waterMark.gameObject.SetActive(false);
@@ -288,7 +297,7 @@ namespace LQFarm
         {
             var v = _views[i];
             if (v == null) return;
-            var p = i < GS.plots.Count ? GS.plots[i] : null;
+            var p = i < Plots.Count ? Plots[i] : null;
             string st = PlotState(p);
 
             string tileKey = st == "locked" ? "locked"
@@ -387,9 +396,9 @@ namespace LQFarm
         public List<int> TickingPlots()
         {
             var outp = new List<int>();
-            for (int i = 0; i < GS.PlotCount && i < GS.plots.Count; i++)
+            for (int i = 0; i < GS.PlotCount && i < Plots.Count; i++)
             {
-                var p = GS.plots[i];
+                var p = Plots[i];
                 if (p != null && !string.IsNullOrEmpty(p.crop) && PlotState(p) == "growing") outp.Add(i);
             }
             return outp;
@@ -398,8 +407,8 @@ namespace LQFarm
         public List<int> ReadyPlots()
         {
             var outp = new List<int>();
-            for (int i = 0; i < GS.PlotCount && i < GS.plots.Count; i++)
-                if (PlotState(GS.plots[i]) == "ready") outp.Add(i);
+            for (int i = 0; i < GS.PlotCount && i < Plots.Count; i++)
+                if (PlotState(Plots[i]) == "ready") outp.Add(i);
             return outp;
         }
 
@@ -408,33 +417,39 @@ namespace LQFarm
         // ============================================================
         public bool Plant(int i, string seedId)
         {
-            var p = GS.plots[i];
+            if (!Ctx.Can(FarmPerm.Plant)) return false;
+            var p = Plots[i];
             if (p == null || p.locked || !string.IsNullOrEmpty(p.crop)) return false;
             var seed = GameData.Get(seedId);
-            if (seed == null || !GS.TakeSeed(seedId, 1)) return false;
+            // the seed leaves the actor's bag; everything else is a property of the land
+            if (seed == null || !Ctx.actor.TakeSeed(seedId, 1)) return false;
 
             p.crop = seedId;
             p.plantedAt = GS.Now;
-            p.dur = GS.GrowTime(seed);
+            p.dur = Ctx.owner.GrowTime(seed);
             p.bonus = 0;
             p.watered = false;
-            p.variant = GS.RollVariant();
+            p.variant = Ctx.owner.RollVariant();
 
-            GS.TrackCrop("plant", seedId, 1);
-            GS.AddEnergy(GS.EnergyGain(1));
+            Ctx.actor.TrackCrop("plant", seedId, 1);
+            Ctx.owner.AddEnergy(Ctx.owner.EnergyGain(1));
             RenderPlot(i);
             Puff(i);
             return true;
         }
 
+        /// <summary>The one action a visitor is allowed to perform, so it is also the one place
+        /// the owner/actor split is not hypothetical: the time comes off the owner's crop and the
+        /// energy goes to the owner, but the mission credit belongs to whoever tapped.</summary>
         public bool Water(int i)
         {
-            var p = GS.plots[i];
+            if (!Ctx.Can(FarmPerm.Water)) return false;
+            var p = Plots[i];
             if (p == null || string.IsNullOrEmpty(p.crop) || p.watered || PlotState(p) == "ready") return false;
             p.watered = true;
             p.bonus += p.dur * 0.25f;
-            GS.Track("water", 1);
-            GS.AddEnergy(GS.EnergyGain(2));
+            Ctx.actor.Track("water", 1);
+            Ctx.owner.AddEnergy(Ctx.owner.EnergyGain(2));
             RenderPlot(i);
             Droplets(i);
             Burst(i, "-25%", Theme.Hex("#8FD8FF"));
@@ -446,18 +461,21 @@ namespace LQFarm
         public bool Harvest(int i, out HarvestResult res)
         {
             res = default;
-            var p = GS.plots[i];
+            if (!Ctx.Can(FarmPerm.Harvest)) return false;
+            var p = Plots[i];
             if (p == null || PlotState(p) != "ready") return false;
             var seed = GameData.Get(p.crop);
             if (seed == null) return false;
             int v = p.variant;
 
-            int xp = GS.XpFor(seed, v);
-            GS.AddProduce(p.crop, v, 1);
-            GS.AddXp(xp);
-            GS.AddEnergy(GS.EnergyFor(seed, v));
-            GS.TrackCrop("harvest", p.crop, 1);
-            if (v > 0) GS.Track("mutate", 1);
+            // harvesting is owner-only (a visitor gets Steal, not Harvest), so the goods and the
+            // xp go to the owner; only the mission credit follows the actor
+            int xp = Ctx.owner.XpFor(seed, v);
+            Ctx.owner.AddProduce(p.crop, v, 1);
+            Ctx.owner.AddXp(xp);
+            Ctx.owner.AddEnergy(Ctx.owner.EnergyFor(seed, v));
+            Ctx.actor.TrackCrop("harvest", p.crop, 1);
+            if (v > 0) Ctx.actor.Track("mutate", 1);
 
             var el = Art.Elem(v);
             FlyToStore(i, Art.Icon(seed.art, v), Art.VariantTint(seed.art, v));
@@ -473,7 +491,7 @@ namespace LQFarm
 
         public bool InstantGrow(int i)
         {
-            var p = GS.plots[i];
+            var p = Plots[i];
             if (p == null || string.IsNullOrEmpty(p.crop)) return false;
             p.bonus = p.dur;
             RenderPlot(i);

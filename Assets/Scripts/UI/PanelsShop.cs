@@ -29,7 +29,7 @@ namespace LQFarm
         public override void Build()
         {
             if (string.IsNullOrEmpty(_sel))
-                _sel = GameData.Seeds.LastOrDefault(s => s.lv <= GS.lv)?.id ?? GameData.Seeds[0].id;
+                _sel = GameData.Seeds.LastOrDefault(s => s.lv <= GS.Local.lv)?.id ?? GameData.Seeds[0].id;
 
             // ---- catalogue ----
             var left = UIKit.Node("left", Body);
@@ -45,7 +45,7 @@ namespace LQFarm
             foreach (var s in GameData.Seeds)
             {
                 var seed = s;
-                bool locked = s.lv > GS.lv;
+                bool locked = s.lv > GS.Local.lv;
                 var cell = ItemCell(_grid, Art.Icon(s.art, 0), Color.white, s.r, null,
                                     locked ? "Cấp " + s.lv : Fmt.N(s.price), locked,
                                     () => { _sel = seed.id; _qty = 1; Refresh(); });
@@ -143,7 +143,7 @@ namespace LQFarm
                 var frame = kv.Value.Find("frame").GetComponent<Image>();
                 var seed = GameData.Get(kv.Key);
                 bool sel = kv.Key == _sel;
-                bool locked = seed.lv > GS.lv;
+                bool locked = seed.lv > GS.Local.lv;
                 frame.color = sel ? Theme.GreenDeep : Theme.Rarity[seed.r].Alpha(locked ? 0.35f : 0.9f);
                 float g = sel ? -6 : -3;
                 frame.rectTransform.Stretch(g, g, g, g);
@@ -152,7 +152,7 @@ namespace LQFarm
 
             var s = GameData.Get(_sel);
             if (s == null) return;
-            bool lockedSel = s.lv > GS.lv;
+            bool lockedSel = s.lv > GS.Local.lv;
 
             _art.sprite = Art.Icon(s.art, 0);
             _name.text = s.name;
@@ -160,10 +160,10 @@ namespace LQFarm
             _rarity.text = rn[s.r] + "  ·  mở ở cấp " + s.lv;
             _rarity.color = Theme.Rarity[s.r];
 
-            _stat["time"].text = Fmt.Time(Mathf.RoundToInt(GS.GrowTime(s)));
+            _stat["time"].text = Fmt.Time(Mathf.RoundToInt(GS.Local.GrowTime(s)));
             _stat["xp"].text = "+" + s.xp;
             _stat["en"].text = "+" + s.en;
-            _stat["sell"].text = Fmt.N(GS.SellPrice(s.id, 0));
+            _stat["sell"].text = Fmt.N(GS.Local.SellPrice(s.id, 0));
             _stat["colors"].text = s.colors + " loại";
 
             _qtyText.text = _qty.ToString();
@@ -221,7 +221,7 @@ namespace LQFarm
         public override void Refresh()
         {
             _setTab?.Invoke(_tab);
-            _steal.text = (20 - GS.stealLeft) + " / 20";
+            _steal.text = (20 - GS.Local.stealLeft) + " / 20";
             foreach (Transform c in _list) UnityEngine.Object.Destroy(c.gameObject);
 
             if (_tab == 2) { BuildProfile(); return; }
@@ -232,7 +232,7 @@ namespace LQFarm
             foreach (var f in pool)
             {
                 var friend = f;
-                bool used = GS.visited.Contains(f.id);
+                bool used = GS.Local.visited.Contains(f.id);
                 var row = Row(_list, 86f);
 
                 var av = UIKit.Node("av", row);
@@ -294,17 +294,17 @@ namespace LQFarm
             }
 
             Stat("Trang trại của bạn",
-                 "Cấp " + GS.lv + " · " + GS.MaxPlots + " ô đất · " + GS.CollectedCount + " bộ sưu tập",
+                 "Cấp " + GS.Local.lv + " · " + GS.Local.MaxPlots + " ô đất · " + GS.Local.CollectedCount + " bộ sưu tập",
                  Theme.Skin.Farmhouse, Theme.Green);
             Stat("Tài sản",
-                 Fmt.N(GS.coin) + " xu · " + Fmt.N(GS.energy) + " năng lượng kỳ diệu",
+                 Fmt.N(GS.Local.coin) + " xu · " + Fmt.N(GS.Local.energy) + " năng lượng kỳ diệu",
                  CoinIcon, Theme.Amber);
             Stat("Thống kê",
-                 "Thu hoạch " + GS.stats.harvest + " · Gieo " + GS.stats.plant +
-                 " · Tưới " + GS.stats.water + " · Đột biến " + GS.stats.mutate,
+                 "Thu hoạch " + GS.Local.stats.harvest + " · Gieo " + GS.Local.stats.plant +
+                 " · Tưới " + GS.Local.stats.water + " · Đột biến " + GS.Local.stats.mutate,
                  Theme.Skin.StarGold, Theme.Blue);
             Stat("Giao thương",
-                 "Đã bán " + GS.stats.sell + " nông sản · mở " + GS.stats.chest + " rương",
+                 "Đã bán " + GS.Local.stats.sell + " nông sản · mở " + GS.Local.stats.chest + " rương",
                  Theme.Skin.NavStore, Theme.Purple);
 
             Tween.Stagger(_list, 0.05f);
@@ -338,7 +338,7 @@ namespace LQFarm
             var ic = UIKit.Img(wallet, CoinIcon, Color.white, "ic");
             ic.preserveAspect = true;
             ic.rectTransform.Anchor(UIKit.Left, new Vector2(28, 0), new Vector2(32, 32));
-            var money = UIKit.Label(wallet, Fmt.N(GS.coin), 22, Theme.Ink, TextAnchor.MiddleRight, FontStyle.Bold);
+            var money = UIKit.Label(wallet, Fmt.N(GS.Local.coin), 22, Theme.Ink, TextAnchor.MiddleRight, FontStyle.Bold);
             money.rectTransform.Stretch(52, 0, 18, 0);
             _wallet = money;
 
@@ -357,14 +357,14 @@ namespace LQFarm
         public override void Refresh()
         {
             _setTab?.Invoke(_tab);
-            if (_wallet != null) _wallet.text = Fmt.N(GS.coin);
+            if (_wallet != null) _wallet.text = Fmt.N(GS.Local.coin);
             foreach (Transform c in _grid) UnityEngine.Object.Destroy(c.gameObject);
 
             var items = _tab == 0 ? GameData.ShopCoin : GameData.ShopGoods;
             foreach (var it in items)
             {
                 var item = it;
-                bool sold = GS.shopBought.Contains(it.id);
+                bool sold = GS.Local.shopBought.Contains(it.id);
 
                 var card = UIKit.Node("card", _grid);
                 var face = UIKit.Round(card, sold ? Theme.Cream3 : Theme.Cream, 20, "face");
@@ -485,7 +485,7 @@ namespace LQFarm
 
         public override void Refresh()
         {
-            int total = GS.CollectedCount;
+            int total = GS.Local.CollectedCount;
             _count.text = "Đã sưu tầm " + total + "/" + GameData.CollectTotal;
             _milestoneFill.fillAmount = Mathf.Clamp01(total / (float)GameData.CollectMilestones.Last());
             foreach (var n in _nodes) n.ring.color = total >= n.need ? Theme.Green : Theme.Cream3;
@@ -495,9 +495,9 @@ namespace LQFarm
             foreach (var set in GameData.Collections)
             {
                 var theSet = set;
-                int have = set.items.Count(it => GS.collected.Contains(it.Key));
+                int have = set.items.Count(it => GS.Local.collected.Contains(it.Key));
                 bool full = have >= set.items.Length;
-                bool claimed = GS.claimedSets.Contains(set.id);
+                bool claimed = GS.Local.claimedSets.Contains(set.id);
 
                 var block = UIKit.Node("set", _list);
                 var le = block.gameObject.AddComponent<LayoutElement>();
@@ -521,7 +521,7 @@ namespace LQFarm
                     var it = set.items[i];
                     var seed = GameData.Get(it.crop);
                     if (seed == null) continue;
-                    bool got = GS.collected.Contains(it.Key);
+                    bool got = GS.Local.collected.Contains(it.Key);
                     var cell = ItemCell(block, Art.Icon(seed.art, it.v), Art.VariantTint(seed.art, it.v),
                                         seed.r, null, got ? it.name : "Chưa có", !got);
                     cell.Anchor(UIKit.BottomLeft, new Vector2(20 + i * 108, 12), new Vector2(98, 98));

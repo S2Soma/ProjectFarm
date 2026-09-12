@@ -120,7 +120,15 @@ namespace LQFarm
 
             // bộ icon điều hướng, CC0 — thay cho sheet gốc chưa rõ nguồn gốc
             public static Sprite NavShop    => S("nav_shop");
-            public static Sprite NavMagic   => S("nav_magic");
+            public static Sprite NavMagic   => S("nav_magic");   // bình năng lượng
+            public static Sprite Chest      => S("chest");
+            public static Sprite ChestOpen  => S("chest_open");
+
+            // drawn for this project — no CC0 pack carried a droplet, and the pack's tick
+            // was a hairline while its exclamation was an 8x16 source
+            public static Sprite Droplet    => Art.Load("Art/gen/droplet");
+            public static Sprite Check      => Art.Load("Art/gen/check");
+            public static Sprite Alert      => Art.Load("Art/gen/alert");
             public static Sprite NavQuest   => S("nav_quest");
             public static Sprite NavSeeds   => S("nav_seeds");
             public static Sprite NavStore   => S("nav_store");

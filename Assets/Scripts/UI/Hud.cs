@@ -86,7 +86,7 @@ namespace LQFarm
             sbg.rectTransform.Stretch();
             sbg.raycastTarget = true;
 
-            var ic = UIKit.Img(strip, Art.Ui("ic_alert"), Theme.Amber, "ic");
+            var ic = UIKit.Img(strip, Theme.Skin.Alert, Theme.Amber, "ic");
             ic.preserveAspect = true;
             ic.rectTransform.Anchor(UIKit.Left, new Vector2(24, 0), new Vector2(24, 24));
 
@@ -177,7 +177,7 @@ namespace LQFarm
             Rail(left, new (Sprite art, string cap, Color col, Action act)[]
             {
                 (Theme.Skin.NavShop,  "Cửa hàng", Theme.Amber,  () => app.Open(new ShopPanel(app))),
-                (Theme.Skin.NavMagic, "Rương",    Theme.Purple, () => app.Open(new ChestPanel(app))),
+                (Theme.Skin.Chest,    "Rương",    Theme.Purple, () => app.Open(new ChestPanel(app))),
                 (Theme.Skin.NavQuest, "Nhiệm vụ", Theme.Blue,   () => app.Open(new MissionsPanel(app))),
             });
 
@@ -250,29 +250,29 @@ namespace LQFarm
         // ------------------------------------------------------------
         public void Render(bool snap = false)
         {
-            _level.text = GS.lv.ToString();
+            _level.text = GS.Local.lv.ToString();
 
-            if (snap || _lastCoin < 0) _coin.text = Fmt.N(GS.coin);
-            else if (_lastCoin != GS.coin) Tween.Count(_coin, GS.coin);
-            _lastCoin = GS.coin;
+            if (snap || _lastCoin < 0) _coin.text = Fmt.N(GS.Local.coin);
+            else if (_lastCoin != GS.Local.coin) Tween.Count(_coin, GS.Local.coin);
+            _lastCoin = GS.Local.coin;
 
-            int need = GS.XpNeed;
-            _xpFill.fillAmount = Mathf.Clamp01(GS.xp / (float)need);
-            _xpText.text = Fmt.N(Math.Min(GS.xp, need)) + " / " + Fmt.N(need);
+            int need = GS.Local.XpNeed;
+            _xpFill.fillAmount = Mathf.Clamp01(GS.Local.xp / (float)need);
+            _xpText.text = Fmt.N(Math.Min(GS.Local.xp, need)) + " / " + Fmt.N(need);
 
-            int goal = GS.EnergyGoal;
-            _energyFill.fillAmount = Mathf.Clamp01(GS.energy / (float)goal);
-            _energy.text = Fmt.N(GS.energy) + "/" + Fmt.N(goal);
+            int goal = GS.Local.EnergyGoal;
+            _energyFill.fillAmount = Mathf.Clamp01(GS.Local.energy / (float)goal);
+            _energy.text = Fmt.N(GS.Local.energy) + "/" + Fmt.N(goal);
 
-            int tier = GS.ChestTier();
+            int tier = GS.Local.ChestTier();
             int owned = 0;
-            for (int i = 0; i < GS.chests.Length; i++) owned += GS.chests[i];
+            for (int i = 0; i < GS.Local.chests.Length; i++) owned += GS.Local.chests[i];
             _chestCount.text = owned > 0 ? "x" + owned : "";
             _chestIcon.color = owned > 0 ? Color.white : new Color(1, 1, 1, 0.72f);
 
-            _collect.text = GS.CollectedCount + "/" + GameData.CollectTotal;
+            _collect.text = GS.Local.CollectedCount + "/" + GameData.CollectTotal;
 
-            var t = GS.ActiveMission(out var pr);
+            var t = GS.Local.ActiveMission(out var pr);
             string mt = t != null ? t.t + "  (" + pr.p + "/" + t.need + ")" : "Đã hoàn thành mọi nhiệm vụ";
             if (mt != _lastMission) { _mission.text = mt; _lastMission = mt; }
         }

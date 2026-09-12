@@ -137,13 +137,13 @@ namespace LQFarm
 
         public override void Refresh()
         {
-            var a = GameData.Level(GS.lv);
-            var b = GameData.Level(GS.lv + 1);
+            var a = GameData.Level(GS.Local.lv);
+            var b = GameData.Level(GS.Local.lv + 1);
 
-            _lvA.text = GS.lv.ToString();
-            _lvB.text = (GS.lv + 1).ToString();
-            _xpFill.fillAmount = Mathf.Clamp01(GS.xp / (float)a.xpNeed);
-            _xpNum.text = Fmt.N(Math.Min(GS.xp, a.xpNeed)) + " / " + Fmt.N(a.xpNeed);
+            _lvA.text = GS.Local.lv.ToString();
+            _lvB.text = (GS.Local.lv + 1).ToString();
+            _xpFill.fillAmount = Mathf.Clamp01(GS.Local.xp / (float)a.xpNeed);
+            _xpNum.text = Fmt.N(Math.Min(GS.Local.xp, a.xpNeed)) + " / " + Fmt.N(a.xpNeed);
 
             var fromVals = new[] { a.growCut, a.mutate, a.priceUp, a.energyUp };
             var toVals = new[] { b.growCut, b.mutate, b.priceUp, b.energyUp };
@@ -153,7 +153,7 @@ namespace LQFarm
                 _rows[i].to.text = Fmt.Pct(toVals[i]);
             }
 
-            var next = GameData.Seeds.FirstOrDefault(s => s.lv == GS.lv + 1);
+            var next = GameData.Seeds.FirstOrDefault(s => s.lv == GS.Local.lv + 1);
             if (next != null)
             {
                 _unlockArt.enabled = true;
@@ -173,7 +173,7 @@ namespace LQFarm
             }
 
             _cost.text = Fmt.N(a.cost);
-            bool can = GS.coin >= a.cost && GS.xp >= a.xpNeed;
+            bool can = GS.Local.coin >= a.cost && GS.Local.xp >= a.xpNeed;
             _go.interactable = true;
             UIKit.BtnLabel(_go).text = can ? "Nâng cấp ngay" : "Chưa đủ điều kiện";
             UIKit.Restyle(_go, can ? Theme.Green : Theme.Cream3, can ? (Color?)null : Theme.InkSoft);
@@ -199,7 +199,7 @@ namespace LQFarm
 
         public override void Build()
         {
-            if (_sel < 0) _sel = GS.ChestTier();
+            if (_sel < 0) _sel = GS.Local.ChestTier();
 
             // energy progress toward the next chest
             var top = UIKit.Node("energy", Body);
@@ -214,7 +214,7 @@ namespace LQFarm
 
             var barBox = UIKit.Node("bar", top);
             barBox.Stretch(70, 18, 22, 18);
-            _energyFill = UIKit.Bar(barBox, Theme.TrackDark, Theme.Purple, 15);
+            _energyFill = UIKit.Bar(barBox, Theme.TrackDark, Theme.Purple, 15);  // khop mau binh
             _energyFill.transform.parent.GetComponent<RectTransform>().Stretch();
             _energyText = UIKit.LabelOutlined(barBox, "", 19, Color.white);
             _energyText.rectTransform.Stretch();
@@ -232,7 +232,9 @@ namespace LQFarm
                 var cell = UIKit.Node("chest", row);
                 cell.Anchor(UIKit.Center, new Vector2((i - 1.5f) * 196f, 0), new Vector2(180, 184));
 
-                var face = UIKit.Round(cell, Theme.Cream, 22, "face");
+                // tier colour has to carry: the chest art is the same gold box for all four,
+                // so without it the tiers were told apart only by the frame
+                var face = UIKit.Round(cell, Color.Lerp(Theme.Cream, tints[i], 0.18f), 22, "face");
                 face.rectTransform.Stretch();
                 face.raycastTarget = true;
                 var frame = UIKit.Img(cell, Theme.Round(22), tints[i], "frame");
@@ -240,10 +242,11 @@ namespace LQFarm
                 frame.rectTransform.Stretch(-4, -4, -4, -4);
                 frame.transform.SetAsFirstSibling();
 
-                UIKit.Img(cell, Theme.Glow(), tints[i].Alpha(0.30f), "glow")
-                     .rectTransform.Anchor(UIKit.Center, new Vector2(0, 10), new Vector2(150, 150));
+                UIKit.Img(cell, Theme.Glow(), tints[i].Alpha(0.62f), "glow")
+                     .rectTransform.Anchor(UIKit.Center, new Vector2(0, 10), new Vector2(168, 168));
 
-                var art = UIKit.Img(cell, Theme.Skin.NavMagic, tints[i], "art");
+                // a light tint shifts the gold toward the tier without muddying the art
+                var art = UIKit.Img(cell, Theme.Skin.Chest, Color.Lerp(Color.white, tints[i], 0.34f), "art");
                 art.preserveAspect = true;
                 art.rectTransform.Anchor(UIKit.Center, new Vector2(0, 14), new Vector2(112, 112));
 
@@ -286,9 +289,9 @@ namespace LQFarm
 
         public override void Refresh()
         {
-            int tier = GS.ChestTier();
-            _energyFill.fillAmount = Mathf.Clamp01(GS.energy / (float)GS.EnergyGoal);
-            _energyText.text = Fmt.N(GS.energy) + " / " + Fmt.N(GS.EnergyGoal) + "  ·  " + GameData.Chests[tier].name;
+            int tier = GS.Local.ChestTier();
+            _energyFill.fillAmount = Mathf.Clamp01(GS.Local.energy / (float)GS.Local.EnergyGoal);
+            _energyText.text = Fmt.N(GS.Local.energy) + " / " + Fmt.N(GS.Local.EnergyGoal) + "  ·  " + GameData.Chests[tier].name;
 
             for (int i = 0; i < _cells.Count; i++)
             {
@@ -301,13 +304,13 @@ namespace LQFarm
                 var art = _cells[i].Find("art").GetComponent<Image>();
                 art.color = locked ? new Color(0.55f, 0.55f, 0.58f, 0.85f) : Color.white;
                 _cells[i].localScale = Vector3.one * (sel ? 1.04f : 0.98f);
-                _counts[i].text = "x" + GS.chests[i];
+                _counts[i].text = "x" + GS.Local.chests[i];
             }
 
             var c = GameData.Chests[_sel];
             _name.text = c.name;
             _desc.text = c.desc;
-            int n = GS.chests[_sel];
+            int n = GS.Local.chests[_sel];
             UIKit.BtnLabel(_open).text = n > 0 ? "Mở tất cả x" + n : "Chưa có rương";
             UIKit.Restyle(_open, n > 0 ? Theme.Amber : Theme.Cream3, n > 0 ? (Color?)null : Theme.InkSoft);
         }
@@ -332,7 +335,7 @@ namespace LQFarm
         static int ActiveChapter()
         {
             for (int i = 0; i < GameData.Chapters.Length; i++)
-                if (GameData.Chapters[i].tasks.Any(t => !GS.Progress(t, false).claimed)) return i;
+                if (GameData.Chapters[i].tasks.Any(t => !GS.Local.Progress(t, false).claimed)) return i;
             return GameData.Chapters.Length - 1;
         }
 
@@ -395,7 +398,7 @@ namespace LQFarm
             foreach (var t in tasks)
             {
                 var task = t;
-                var pr = GS.Progress(t, _daily);
+                var pr = GS.Local.Progress(t, _daily);
                 bool done = pr.p >= t.need;
 
                 var row = Row(_list, 74f);
@@ -494,7 +497,7 @@ namespace LQFarm
 
             if (_seedTab)
             {
-                var owned = GS.seeds.Where(kv => kv.Value > 0).ToList();
+                var owned = GS.Local.seeds.Where(kv => kv.Value > 0).ToList();
                 _empty.text = owned.Count == 0 ? "Túi hạt giống trống" : "";
                 foreach (var kv in owned)
                 {
@@ -508,7 +511,7 @@ namespace LQFarm
             }
             else
             {
-                var list = GS.StoreList();
+                var list = GS.Local.StoreList();
                 _empty.text = list.Count == 0 ? "Kho trống — hãy thu hoạch nông sản!" : "";
                 foreach (var it in list)
                 {

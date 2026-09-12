@@ -35,11 +35,33 @@ Vì vậy đừng đăng nhập tài khoản quan trọng vào `~/.claude-browse
 
 ## Kiểm tra biên dịch không cần chiếm Editor
 
-Khi Unity Editor đang mở, batchmode bị khoá. Compile kiểm tra bằng Roslyn của Unity:
+Khi Unity Editor đang mở, batchmode bị khoá. Dùng script (Roslyn của chính Unity):
 
-    U=/Applications/Unity/Hub/Editor/6000.4.10f1/Unity.app/Contents
-    $U/Resources/Scripting/NetCoreRuntime/dotnet \
-      $U/Resources/Scripting/DotNetSdkRoslyn/csc.dll @<response-file>
+    Tools/compile_check.sh              # chỉ Assets/Scripts — nhanh, chạy trước mỗi commit
+    Tools/compile_check.sh --editor     # thêm Assets/Editor
+
+Thoát khác 0 nếu có lỗi. Hai cái bẫy đã gặp rồi, script đã xử lý sẵn — **đừng tự dựng lại
+response file bằng tay**:
+
+- **Không được tham chiếu `Library/ScriptAssemblies/Assembly-CSharp*.dll`.** Đó là bản Editor đã
+  biên dịch chính những file đang compile → mọi type bị định nghĩa hai lần, hàng trăm cảnh báo
+  CS0436 chôn mất lỗi thật.
+- **`UnityEditor.CoreModule.dll` nằm trong `Managed/UnityEngine/`**, không nằm cạnh
+  `Managed/UnityEditor.dll`. Thêm cả hai là trùng type (CS0433). Chế độ không `--editor` **cố ý**
+  giấu mọi assembly `UnityEditor*` để bắt được lỗi game code lỡ gọi API Editor — thứ compile được
+  trong Editor nhưng vỡ khi build player.
+
+## Quy tắc kiến trúc (có cưỡng chế)
+
+`Assets/Editor/ArchitectureGuard.cs` **làm fail build** nếu vi phạm. Chạy tay:
+menu **Tools ▸ LQ Farm ▸ Kiểm tra kiến trúc**.
+
+1. `GS` chỉ được có 7 thành viên tĩnh: `Local`, `Viewing`, `Now`, `PlotCount`, `Save`, `Load`,
+   `Reset`. Mọi trạng thái người chơi thuộc về `PlayerState`.
+2. `Assets/Scripts/Farm/` **không được** đọc `GS.Local` — lớp thế giới đi qua `FarmContext`
+   (`Ctx.owner` / `Ctx.actor`).
+
+Cả hai để giữ cho phần bạn bè online sau này rẻ. Xem `REDESIGN.md` §9.
 
 ## Node.js
 
