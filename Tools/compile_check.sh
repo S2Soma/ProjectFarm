@@ -55,6 +55,13 @@ WITH_EDITOR=0
     [ -f "$d" ] && echo "-r:$PWD/$d"
   done
 
+  # Precompiled DLLs shipped inside packages never appear in ScriptAssemblies (nothing compiles
+  # them), so they have to be picked up from the package cache. Newtonsoft is the save system's
+  # serialiser. Skip the AOT/ copy — it is the same assembly name and would collide.
+  for d in Library/PackageCache/com.unity.nuget.newtonsoft-json@*/Runtime/Newtonsoft.Json.dll; do
+    [ -f "$d" ] && echo "-r:$PWD/$d"
+  done
+
   find Assets/Scripts -name '*.cs'
   [ "$WITH_EDITOR" = 1 ] && find Assets/Editor -name '*.cs'
 } > "$RSP"

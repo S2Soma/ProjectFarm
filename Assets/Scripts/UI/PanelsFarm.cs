@@ -44,7 +44,9 @@ namespace LQFarm
             barBox.Anchor(UIKit.Center, new Vector2(0, -2), new Vector2(360, 30));
             _xpFill = UIKit.Bar(barBox, Theme.TrackDark, Theme.Green, 15);
             _xpFill.transform.parent.GetComponent<RectTransform>().Stretch();
-            _xpNum = UIKit.LabelOutlined(barBox, "", 18, Color.white);
+            // Dark ink, no outline: this bar sits on a cream card, where white-on-pale-track was
+            // the least readable number on the screen.
+            _xpNum = UIKit.Label(barBox, "", 17, Theme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
             _xpNum.rectTransform.Stretch();
 
             UIKit.Label(head, "Kinh nghiệm", 16, Theme.InkSoft)
@@ -154,17 +156,37 @@ namespace LQFarm
             }
 
             var next = GameData.Seeds.FirstOrDefault(s => s.lv == GS.Local.lv + 1);
-            if (next != null)
+            string quick = QuickActions.UnlockedAt(GS.Local.lv + 1);
+            if (quick != null)
+            {
+                // a new verb on the bottom bar outranks a new seed: it changes how every
+                // later session is played
+                _unlockArt.enabled = true;
+                _unlockArt.sprite = Theme.Skin.StarGold;
+                _unlockName.text = quick;
+            }
+            else if (next != null)
             {
                 _unlockArt.enabled = true;
                 _unlockArt.sprite = Art.Icon(next.art, 0);
                 _unlockName.text = next.name;
             }
-            else if (b.plots > a.plots)
+            // Levels no longer HAND OUT plots (LevelInfo.plots is dead data since plots are
+            // bought), so "+1 ô đất trồng" was a promise the level-up would not keep. What a
+            // level really unlocks is the right to buy the next plot, or an island's gate.
+            else if (GS.Local.PlotLevelNow(0) == GS.Local.lv + 1
+                     && IslandSys.OpenCount(GS.Local.islands[0]) < IslandSys.PlotsPerIsland)
             {
                 _unlockArt.enabled = true;
                 _unlockArt.sprite = Art.TileEmpty;
-                _unlockName.text = "+1 ô đất trồng";
+                _unlockName.text = "Mở bán ô đất · " + Fmt.N(GS.Local.PlotPriceNow(0));
+            }
+            else if (IslandSys.NextLocked(GS.Local) is int isle && isle > 0
+                     && IslandSys.Def(isle).lv == GS.Local.lv + 1)
+            {
+                _unlockArt.enabled = true;
+                _unlockArt.sprite = Theme.Skin.Farmhouse;
+                _unlockName.text = "Đủ cấp mở " + IslandSys.NameOf(isle);
             }
             else
             {
@@ -199,7 +221,12 @@ namespace LQFarm
 
         public override void Build()
         {
-            if (_sel < 0) _sel = GS.Local.ChestTier();
+            // Open on a chest the player can actually open. Defaulting to the tier currently
+            // being FILLED showed "Rương thần kỳ ×0 · Chưa có rương" to a player holding two
+            // Rương quý — the panel's one action greyed out with the answer one tap away.
+            _sel = GS.Local.ChestTier();
+            for (int t = GS.Local.chests.Length - 1; t >= 0; t--)
+                if (GS.Local.chests[t] > 0) { _sel = t; break; }
 
             // energy progress toward the next chest
             var top = UIKit.Node("energy", Body);
@@ -214,9 +241,10 @@ namespace LQFarm
 
             var barBox = UIKit.Node("bar", top);
             barBox.Stretch(70, 18, 22, 18);
-            _energyFill = UIKit.Bar(barBox, Theme.TrackDark, Theme.Purple, 15);  // khop mau binh
+            _energyFill = UIKit.Bar(barBox, Theme.TrackDark, Theme.Purple, 15);
             _energyFill.transform.parent.GetComponent<RectTransform>().Stretch();
-            _energyText = UIKit.LabelOutlined(barBox, "", 19, Color.white);
+            // dark ink on the cream card; white-on-pale-track was barely legible
+            _energyText = UIKit.Label(barBox, "", 18, Theme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
             _energyText.rectTransform.Stretch();
 
             // chest row
@@ -326,16 +354,18 @@ namespace LQFarm
         public override Vector2 Size => new Vector2(900, 600);
         public override Color Accent => Theme.BlueDeep;
 
-        static bool _daily;
+        /// <summary>0 = Đơn hàng (contracts), 1 = Chương truyện, 2 = Hằng ngày.</summary>
+        static int _tab;
         static int _chapter = -1;
         RectTransform _list, _chapterBar;
-        Text _chNum, _chName;
+        Text _chNum, _chName, _streak;
         Action<int> _setTab;
 
         static int ActiveChapter()
         {
             for (int i = 0; i < GameData.Chapters.Length; i++)
                 if (GameData.Chapters[i].tasks.Any(t => !GS.Local.Progress(t, false).claimed)) return i;
+            // fall through
             return GameData.Chapters.Length - 1;
         }
 
@@ -344,10 +374,19 @@ namespace LQFarm
             if (_chapter < 0) _chapter = ActiveChapter();
 
             var tabs = UIKit.Node("tabs", Body);
-            tabs.Anchor(UIKit.Top, new Vector2(-150, -4), new Vector2(320, 46));
-            _setTab = UIKit.Tabs(tabs, new[] { "Chương truyện", "Hằng ngày" },
-                                 i => { _daily = i == 1; Refresh(); }, 158, 46, 10);
+            // 176, not 140: "Chương truyện" at 22 px bold is ~160 px and labels overflow silently,
+            // so it ran across both neighbouring tabs.
+            tabs.Anchor(UIKit.Top, new Vector2(-150, -4), new Vector2(544, 46));
+            _setTab = UIKit.Tabs(tabs, new[] { "Đơn hàng", "Chương truyện", "Hằng ngày" },
+                                 i => { _tab = i; Refresh(); }, 176, 46, 8);
             tabs.GetChild(0).GetComponent<RectTransform>().anchoredPosition = Vector2.zero;
+
+            // Streak lives here and NOT on the HUD. Contracts bring a third countdown into a
+            // game that already has weather (1 h) and tags (12 h), and three live clocks is one
+            // too many — the player starts ignoring all of them, and the first casualty is the
+            // weather readout, which is the strongest thing in the whole redesign.
+            _streak = UIKit.Label(Body, "", 17, Theme.AmberDeep, TextAnchor.MiddleRight, FontStyle.Bold);
+            _streak.rectTransform.Anchor(UIKit.TopRight, new Vector2(-16, -18), new Vector2(240, 26));
 
             // chapter stepper
             _chapterBar = UIKit.Node("chapter", Body);
@@ -379,8 +418,14 @@ namespace LQFarm
 
         public override void Refresh()
         {
-            _setTab?.Invoke(_daily ? 1 : 0);
-            _chapterBar.gameObject.SetActive(!_daily);
+            _setTab?.Invoke(_tab);
+            _chapterBar.gameObject.SetActive(_tab == 1);
+
+            int st = GS.Local.streak;
+            _streak.text = st > 0 ? "Chuỗi " + st : "";
+
+            if (_tab == 0) { RefreshContracts(); return; }
+            bool _daily = _tab == 2;
 
             Task[] tasks;
             if (_daily) tasks = GameData.Daily;
@@ -395,33 +440,55 @@ namespace LQFarm
 
             foreach (Transform c in _list) UnityEngine.Object.Destroy(c.gameObject);
 
-            foreach (var t in tasks)
+            for (int ti = 0; ti < tasks.Length; ti++)
             {
+                var t = tasks[ti];
                 var task = t;
                 var pr = GS.Local.Progress(t, _daily);
                 bool done = pr.p >= t.need;
 
                 var row = Row(_list, 74f);
 
+                // Chapter missions are pre-graded: 1 bronze, 2 silver, 3 gold, 4 diamond, so
+                // every level ENDS on a diamond. The grade badge is the same one the contract
+                // board uses, because a player should not have to learn two vocabularies.
+                float xOff = 20f;
+                if (!_daily)
+                {
+                    var g = MissionSys.ChapterGrade(ti);
+                    var gd = MissionSys.Def(g);
+                    var badge = UIKit.Round(row, Theme.Hex(gd.hex), 13, "grade");
+                    badge.rectTransform.Anchor(UIKit.Left, new Vector2(20, 14), new Vector2(100, 24));
+                    UIKit.Label(badge.rectTransform, gd.name, 14, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold)
+                         .rectTransform.Stretch();
+                    xOff = 138f;
+                }
+
                 var title = UIKit.Label(row, t.t, 21, Theme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
-                title.rectTransform.Anchor(UIKit.TopLeft, new Vector2(20, -12), new Vector2(360, 26));
+                title.rectTransform.Anchor(UIKit.TopLeft, new Vector2(xOff, -12), new Vector2(360, 26));
                 title.rectTransform.pivot = new Vector2(0, 1);
 
                 // progress bar
                 var barBox = UIKit.Node("p", row);
-                barBox.Anchor(UIKit.BottomLeft, new Vector2(20, 14), new Vector2(300, 16));
+                barBox.Anchor(UIKit.BottomLeft, new Vector2(xOff, 14), new Vector2(300, 16));
                 barBox.pivot = new Vector2(0, 0);
                 var fill = UIKit.Bar(barBox, Theme.TrackDark, done ? Theme.Green : Theme.Blue, 8);
                 fill.transform.parent.GetComponent<RectTransform>().Stretch();
                 fill.fillAmount = Mathf.Clamp01(pr.p / (float)t.need);
 
                 var pt = UIKit.Label(row, pr.p + "/" + t.need, 16, Theme.InkSoft, TextAnchor.MiddleLeft);
-                pt.rectTransform.Anchor(UIKit.BottomLeft, new Vector2(330, 12), new Vector2(90, 20));
+                pt.rectTransform.Anchor(UIKit.BottomLeft, new Vector2(xOff + 310, 12), new Vector2(90, 20));
                 pt.rectTransform.pivot = new Vector2(0, 0);
 
-                var xpChip = RewardChip(row, XpIcon, Fmt.N(t.xp), Theme.Blue);
+                // Rewards are quoted in UNIT — the margin of the best crop the player can grow —
+                // so the tables keep their meaning as the economy grows instead of needing a
+                // rebalance every few levels.
+                int rXp = _daily ? t.xp : MissionSys.ChapterXp(GS.Local, ti);
+                int rCoin = _daily ? t.coin : MissionSys.ChapterCoin(GS.Local, ti);
+
+                var xpChip = RewardChip(row, XpIcon, Fmt.N(rXp), Theme.Blue);
                 xpChip.Anchor(UIKit.Right, new Vector2(-292, 16), new Vector2(112, 32));
-                var coinChip = RewardChip(row, CoinIcon, Fmt.N(t.coin), Theme.AmberDeep);
+                var coinChip = RewardChip(row, CoinIcon, Fmt.N(rCoin), Theme.AmberDeep);
                 coinChip.Anchor(UIKit.Right, new Vector2(-292, -18), new Vector2(112, 32));
 
                 if (pr.claimed)
@@ -442,6 +509,110 @@ namespace LQFarm
                 {
                     var b = UIKit.Btn(row, "Đi đến", Theme.Blue, Theme.BlueDeep, 22, 22,
                                       () => { app.CloseAll(); app.Toast("Hãy quay lại nông trại và làm việc!"); });
+                    b.GetComponent<RectTransform>().Anchor(UIKit.Right, new Vector2(-20, 0), new Vector2(140, 50));
+                }
+            }
+
+            Tween.Stagger(_list, 0.04f);
+        }
+
+        /// <summary>The contract board: one row per slot, with its grade worn on the outside.
+        ///
+        /// The grade badge is the point of this screen. A player has to be able to look at the
+        /// board and decide whether the gold one is worth reorganising the farm for, which is
+        /// only a decision if the grade is visible before they commit.</summary>
+        void RefreshContracts()
+        {
+            GS.Local.SyncContracts();
+            foreach (Transform c in _list) UnityEngine.Object.Destroy(c.gameObject);
+
+            long now = GS.Now;
+            var list = GS.Local.contracts;
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                int slot = i;
+                var m = list[i];
+                // 96, not 82. Three stacked lines (title, expiry, progress) plus Vietnamese
+                // diacritics need ~1.45x the font size per line box, and at 82 the bar was
+                // landing on top of the expiry text. UIKit.Label overflows silently rather than
+                // wrapping, so a rect that is too short does not clip — it collides.
+                var row = Row(_list, 96f);
+
+                if (m.Empty)
+                {
+                    // A recessed well, not a missing row: a board whose rows move as they fill is
+                    // a board you cannot build any habit around.
+                    var wait = UIKit.Label(row, now < m.refillAt
+                            ? "Đơn mới sau " + Fmt.Time((int)((m.refillAt - now) / 1000L))
+                            : "Đang chuẩn bị đơn mới…",
+                        18, Theme.InkSoft, TextAnchor.MiddleCenter);
+                    wait.rectTransform.Stretch();
+                    continue;
+                }
+
+                var gd = MissionSys.Def(m.grade);
+
+                // Three columns, and the boundaries are stated once here rather than rediscovered
+                // per widget. Everything overflows silently in this UI, so a rect that is too
+                // narrow does not clip — it lands on its neighbour, which is how the badge ended
+                // up written across the expiry text on the first pass.
+                //
+                //   badge   20 .. 126
+                //   text   148 .. 420   (title / bar+count / expiry, stacked)
+                //   chips  436 .. 566
+                //   button 656 .. 796
+                //
+                // UIKit.Anchor sets pivot = anchor, so a UIKit.Left anchor positions the LEFT
+                // EDGE, not the centre — reading it as a centre is what put the badge on top of
+                // the progress bar, and UIKit.Right likewise positions the right edge.
+                const float TextX = 148f, TextW = 272f;
+
+                var badge = UIKit.Round(row, Theme.Hex(gd.hex), 14, "grade");
+                badge.rectTransform.Anchor(UIKit.Left, new Vector2(20, 0), new Vector2(106, 28));
+                UIKit.Label(badge.rectTransform, gd.name, 15, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold)
+                     .rectTransform.Stretch();
+
+                var title = UIKit.Label(row, MissionSys.Describe(m), 20, Theme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
+                title.rectTransform.Anchor(UIKit.TopLeft, new Vector2(TextX, -8), new Vector2(TextW, 28));
+                title.rectTransform.pivot = new Vector2(0, 1);
+
+                var barBox = UIKit.Node("p", row);
+                barBox.Anchor(UIKit.TopLeft, new Vector2(TextX, -44), new Vector2(180, 14));
+                barBox.pivot = new Vector2(0, 1);
+                var fill = UIKit.Bar(barBox, Theme.TrackDark, m.Done ? Theme.Green : Theme.Hex(gd.hex), 7);
+                fill.transform.parent.GetComponent<RectTransform>().Stretch();
+                fill.fillAmount = Mathf.Clamp01(m.p / (float)Mathf.Max(1, m.need));
+
+                var pt = UIKit.Label(row, m.p + "/" + m.need, 15, Theme.InkSoft, TextAnchor.MiddleLeft);
+                pt.rectTransform.Anchor(UIKit.TopLeft, new Vector2(TextX + 190, -40), new Vector2(80, 22));
+                pt.rectTransform.pivot = new Vector2(0, 1);
+
+                // Expiry gets its own line, small, and only turns urgent near the end. It is
+                // information on a row, not a third live clock competing with weather and tags.
+                long left = m.expiresAt - now;
+                bool urgent = left < 10L * 60_000L;
+                var exp = UIKit.Label(row, "Còn " + Fmt.Time((int)(left / 1000L)), 14,
+                                      urgent ? Theme.Red : Theme.InkSoft, TextAnchor.MiddleLeft,
+                                      urgent ? FontStyle.Bold : FontStyle.Normal);
+                exp.rectTransform.Anchor(UIKit.TopLeft, new Vector2(TextX, -66), new Vector2(200, 20));
+                exp.rectTransform.pivot = new Vector2(0, 1);
+
+                var xpChip = RewardChip(row, XpIcon, Fmt.N(MissionSys.XpReward(GS.Local, m)), Theme.Blue);
+                xpChip.Anchor(UIKit.Right, new Vector2(-250, 20), new Vector2(130, 30));
+                var coinChip = RewardChip(row, CoinIcon, Fmt.N(MissionSys.CoinReward(GS.Local, m)), Theme.AmberDeep);
+                coinChip.Anchor(UIKit.Right, new Vector2(-250, -20), new Vector2(130, 30));
+
+                if (m.Done)
+                {
+                    var b = UIKit.Btn(row, "Nhận", Theme.Green, Theme.GreenDark, 22, 22,
+                                      () => { if (GS.Local.ClaimContract(slot)) { app.AfterClaim(); Refresh(); } });
+                    b.GetComponent<RectTransform>().Anchor(UIKit.Right, new Vector2(-20, 0), new Vector2(140, 50));
+                }
+                else
+                {
+                    var b = UIKit.Btn(row, "Đi đến", Theme.Blue, Theme.BlueDeep, 22, 22,
+                                      () => { app.CloseAll(); app.Toast(MissionSys.Describe(m)); });
                     b.GetComponent<RectTransform>().Anchor(UIKit.Right, new Vector2(-20, 0), new Vector2(140, 50));
                 }
             }

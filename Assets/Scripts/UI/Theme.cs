@@ -29,6 +29,19 @@ namespace LQFarm
         /// <summary>Rãnh thanh tiến độ — đủ tối để đọc được trên nền kem.</summary>
         public static readonly Color TrackDark = new Color(0.32f, 0.26f, 0.20f, 0.45f);
 
+        /// <summary>The HUD's one glass tone.
+        ///
+        /// Every floating surface over the farm uses it, at one alpha. They were 0.60 and 0.62
+        /// before, which is invisible as a difference but visible as INCONSISTENCY: the same
+        /// translucency over pale sky and over dark sea reads as two different materials, and two
+        /// chips side by side in the same cluster looked like one was disabled. 0.78 also lifts
+        /// white lettering clear of a bright noon sky.</summary>
+        public static readonly Color Glass      = new Color(0.07f, 0.17f, 0.14f, 0.78f);
+        public static readonly Color GlassDeep  = new Color(0.05f, 0.13f, 0.11f, 0.88f);
+        /// <summary>Track colour for a bar drawn ON glass — TrackDark is a warm brown built for
+        /// cream panels and vanishes here.</summary>
+        public static readonly Color TrackGlass = new Color(1f, 1f, 1f, 0.22f);
+
         // sky / ground
         public static readonly Color SkyTop    = Hex("#5FC2EE");
         public static readonly Color SkyBottom = Hex("#BFEBFF");
@@ -129,6 +142,7 @@ namespace LQFarm
             public static Sprite Droplet    => Art.Load("Art/gen/droplet");
             public static Sprite Check      => Art.Load("Art/gen/check");
             public static Sprite Alert      => Art.Load("Art/gen/alert");
+            public static Sprite More       => Art.Load("Art/gen/more");
             public static Sprite NavQuest   => S("nav_quest");
             public static Sprite NavSeeds   => S("nav_seeds");
             public static Sprite NavStore   => S("nav_store");

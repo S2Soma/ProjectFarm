@@ -81,8 +81,13 @@ namespace LQFarm
 
         static IEnumerator CountRoutine(Text label, long to, float time, string suffix)
         {
-            long from = 0;
-            long.TryParse(label.text.Replace(".", "").Replace(",", "").Replace(suffix, "").Trim(), out from);
+            // string.Replace("", "") THROWS (ArgumentException: oldValue cannot be zero length),
+            // and the HUD calls this with no suffix — so every coin change killed the coroutine
+            // on its first line and the balance on screen simply never moved after the first
+            // render. Its only symptom was a stray console exception on every coin change.
+            string digits = label.text.Replace(".", "").Replace(",", "");
+            if (!string.IsNullOrEmpty(suffix)) digits = digits.Replace(suffix, "");
+            long.TryParse(digits.Trim(), out long from);
             if (from == to) { label.text = Fmt.N(to) + suffix; yield break; }
             for (float e = 0; e < time; e += Time.unscaledDeltaTime)
             {
@@ -215,7 +220,10 @@ namespace LQFarm
 
         public static string N(long n)  { return n.ToString("#,0", Vi); }
         public static string N(int n)   { return n.ToString("#,0", Vi); }
-        public static string Pct(float v) { return (v * 100f).ToString("0.00") + "%"; }
+        /// <summary>Vietnamese decimal comma, trailing zeros dropped: 16%, 25,2%. The old
+        /// "0.00" used the DEVICE culture, so one build printed 16.00% here and 16,00% on a
+        /// Vietnamese phone, next to "×1,35" elsewhere on the same screen.</summary>
+        public static string Pct(float v) { return (v * 100f).ToString("0.#", Vi) + "%"; }
 
         /// <summary>Countdown text: 1g 20p / 3p 05s / 42s.</summary>
         public static string Time(int sec)

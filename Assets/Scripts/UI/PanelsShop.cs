@@ -47,16 +47,16 @@ namespace LQFarm
                 var seed = s;
                 bool locked = s.lv > GS.Local.lv;
                 var cell = ItemCell(_grid, Art.Icon(s.art, 0), Color.white, s.r, null,
-                                    locked ? "Cấp " + s.lv : Fmt.N(s.price), locked,
+                                    locked ? "Cấp " + s.lv : s.price == 0 ? "Miễn phí" : Fmt.N(s.price), locked,
                                     () => { _sel = seed.id; _qty = 1; Refresh(); });
 
-                if (!locked)
+                if (!locked && s.price > 0)     // no coin glyph next to "Miễn phí"
                 {
                     var coin = UIKit.Img(cell, CoinIcon, Color.white, "coin");
                     coin.preserveAspect = true;
                     coin.rectTransform.Anchor(UIKit.Bottom, new Vector2(-34, 14), new Vector2(18, 18));
                 }
-                else
+                else if (locked)
                 {
                     var lockIc = UIKit.Img(cell, Theme.Skin.Lock, Color.white, "lock");
                     lockIc.preserveAspect = true;
@@ -97,8 +97,11 @@ namespace LQFarm
             _rarity = UIKit.Label(_detail, "", 16, Theme.InkSoft, TextAnchor.MiddleCenter);
             _rarity.rectTransform.Anchor(UIKit.Top, new Vector2(0, -152), new Vector2(340, 20));
 
+            // "Số loại" read Seed.colors, a field from the web build that no longer means anything
+            // (mutation tiers are a separate table now), and "Giá bán" showed the per-FRUIT price
+            // without saying so — next to a harvest that yields three to six of them.
             string[] keys = { "time", "xp", "en", "sell", "colors" };
-            string[] labels = { "Thời gian chín", "Kinh nghiệm", "Năng lượng", "Giá bán", "Số loại" };
+            string[] labels = { "Thời gian chín", "Kinh nghiệm", "Năng lượng", "Giá mỗi quả", "Số quả / vụ" };
             for (int i = 0; i < keys.Length; i++)
             {
                 var row = UIKit.Node("s", _detail);
@@ -164,13 +167,13 @@ namespace LQFarm
             _stat["xp"].text = "+" + s.xp;
             _stat["en"].text = "+" + s.en;
             _stat["sell"].text = Fmt.N(GS.Local.SellPrice(s.id, 0));
-            _stat["colors"].text = s.colors + " loại";
+            _stat["colors"].text = GS.Local.YieldOf(s, 0) + " quả";
 
             _qtyText.text = _qty.ToString();
             long cost = (long)s.price * _qty;
 
             _buy.interactable = !lockedSel;
-            _total.text = lockedSel ? "Cần cấp " + s.lv : "Mua · " + Fmt.N(cost);
+            _total.text = lockedSel ? "Cần cấp " + s.lv : cost == 0 ? "Nhận miễn phí" : "Mua · " + Fmt.N(cost);
             UIKit.Restyle(_buy, lockedSel ? Theme.Cream3 : Theme.Green, lockedSel ? Theme.InkSoft : (Color?)null);
         }
     }
@@ -203,8 +206,9 @@ namespace LQFarm
             var ic = UIKit.Img(counter, Theme.Skin.NavFriends, Theme.Teal, "ic");
             ic.preserveAspect = true;
             ic.rectTransform.Anchor(UIKit.Left, new Vector2(26, 0), new Vector2(28, 28));
+            // the icon spans 26..54 (Anchor Left = left edge), so the caption starts after it
             UIKit.Label(counter, "Lượt thăm", 16, Theme.InkSoft, TextAnchor.MiddleLeft)
-                 .rectTransform.Stretch(48, 0, 70, 0);
+                 .rectTransform.Stretch(62, 0, 70, 0);
             _steal = UIKit.Label(counter, "", 20, Theme.Ink, TextAnchor.MiddleRight, FontStyle.Bold);
             _steal.rectTransform.Stretch(120, 0, 16, 0);
 
@@ -250,11 +254,12 @@ namespace LQFarm
                      .rectTransform.Stretch();
 
                 var name = UIKit.Label(row, f.name, 22, Theme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
-                name.rectTransform.Anchor(UIKit.TopLeft, new Vector2(104, -18), new Vector2(360, 28));
+                // The avatar spans 58..122 plus its ring; the name at 104 was printed across it.
+                name.rectTransform.Anchor(UIKit.TopLeft, new Vector2(140, -18), new Vector2(360, 28));
                 name.rectTransform.pivot = new Vector2(0, 1);
 
                 var tag = UIKit.Node("tag", row);
-                tag.Anchor(UIKit.BottomLeft, new Vector2(104, 16), new Vector2(180, 26));
+                tag.Anchor(UIKit.BottomLeft, new Vector2(140, 16), new Vector2(180, 26));
                 tag.pivot = new Vector2(0, 0);
                 var tagOn = suggest ? false : !used;
                 UIKit.Round(tag, tagOn ? Theme.Green.Alpha(0.18f) : Theme.Cream3, 13, "bg").rectTransform.Stretch();
@@ -294,7 +299,7 @@ namespace LQFarm
             }
 
             Stat("Trang trại của bạn",
-                 "Cấp " + GS.Local.lv + " · " + GS.Local.MaxPlots + " ô đất · " + GS.Local.CollectedCount + " bộ sưu tập",
+                 "Cấp " + GS.Local.lv + " · " + GS.Local.OpenPlots + " ô đất · " + GS.Local.CollectedCount + " bộ sưu tập",
                  Theme.Skin.Farmhouse, Theme.Green);
             Stat("Tài sản",
                  Fmt.N(GS.Local.coin) + " xu · " + Fmt.N(GS.Local.energy) + " năng lượng kỳ diệu",
@@ -321,6 +326,12 @@ namespace LQFarm
         public override Vector2 Size => new Vector2(1040, 580);
         public override Color Accent => Theme.AmberDeep;
 
+        /// <summary>Opens on Vật phẩm.
+        ///
+        /// The goods are the only shelf with anything to buy twice — a player visits the shop
+        /// because they want a watering can or a forecast, not because they want to re-read nine
+        /// one-time cosmetics. Opening on the tab that answers why they came saves a tap every
+        /// single visit.</summary>
         static int _tab;
         RectTransform _grid;
         Action<int> _setTab;
@@ -330,7 +341,7 @@ namespace LQFarm
             var tabs = UIKit.Node("tabs", Body);
             tabs.Anchor(UIKit.TopLeft, new Vector2(0, -4), new Vector2(380, 46));
             tabs.pivot = new Vector2(0, 1);
-            _setTab = UIKit.Tabs(tabs, new[] { "Xu nông trại", "Vật phẩm" }, i => { _tab = i; Refresh(); }, 178, 46, 10);
+            _setTab = UIKit.Tabs(tabs, new[] { "Vật phẩm", "Trang trí" }, i => { _tab = i; Refresh(); }, 178, 46, 10);
 
             var wallet = UIKit.Node("wallet", Body);
             wallet.Anchor(UIKit.TopRight, new Vector2(0, -4), new Vector2(210, 46));
@@ -360,7 +371,7 @@ namespace LQFarm
             if (_wallet != null) _wallet.text = Fmt.N(GS.Local.coin);
             foreach (Transform c in _grid) UnityEngine.Object.Destroy(c.gameObject);
 
-            var items = _tab == 0 ? GameData.ShopCoin : GameData.ShopGoods;
+            var items = _tab == 0 ? GameData.ShopGoods : GameData.ShopCoin;
             foreach (var it in items)
             {
                 var item = it;
@@ -371,10 +382,15 @@ namespace LQFarm
                 face.rectTransform.Stretch();
                 face.raycastTarget = true;
 
-                var timer = UIKit.Node("t", card);
-                timer.Anchor(UIKit.TopRight, new Vector2(-8, -8), new Vector2(86, 24));
-                UIKit.Round(timer, Theme.Ink.Alpha(0.14f), 12, "bg").rectTransform.Stretch();
-                UIKit.Label(timer, it.time, 14, Theme.InkSoft, TextAnchor.MiddleCenter).rectTransform.Stretch();
+                // Goods have no restock clock — they are always on the shelf — so the corner
+                // badge is only drawn for the cosmetics that actually rotate.
+                if (!string.IsNullOrEmpty(it.time))
+                {
+                    var timer = UIKit.Node("t", card);
+                    timer.Anchor(UIKit.TopRight, new Vector2(-8, -8), new Vector2(86, 24));
+                    UIKit.Round(timer, Theme.Ink.Alpha(0.14f), 12, "bg").rectTransform.Stretch();
+                    UIKit.Label(timer, it.time, 14, Theme.InkSoft, TextAnchor.MiddleCenter).rectTransform.Stretch();
+                }
 
                 var artBox = UIKit.Node("art", card);
                 artBox.Anchor(UIKit.Top, new Vector2(0, -20), new Vector2(96, 96));
@@ -387,7 +403,7 @@ namespace LQFarm
                 var nm = UIKit.Label(card, it.name, 19, Theme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
                 nm.rectTransform.Anchor(UIKit.Top, new Vector2(0, -122), new Vector2(210, 24));
 
-                var sub = UIKit.Label(card, it.sub, 15, Theme.InkSoft, TextAnchor.MiddleCenter);
+                var sub = UIKit.Label(card, sold ? "Đã sở hữu" : it.sub, 15, Theme.InkSoft, TextAnchor.MiddleCenter);
                 sub.rectTransform.Anchor(UIKit.Top, new Vector2(0, -146), new Vector2(210, 20));
 
                 var priceBox = UIKit.Node("p", card);
@@ -400,7 +416,7 @@ namespace LQFarm
                     ci.preserveAspect = true;
                     ci.rectTransform.Anchor(UIKit.Left, new Vector2(24, 0), new Vector2(26, 26));
                 }
-                UIKit.Label(priceBox, sold ? "Đã mua" : Fmt.N(it.price), 20,
+                UIKit.Label(priceBox, sold ? "Đã mua" : Fmt.N(ShopSys.PriceOf(GS.Local, it)), 20,
                             sold ? Theme.InkSoft : Theme.AmberDeep,
                             sold ? TextAnchor.MiddleCenter : TextAnchor.MiddleRight, FontStyle.Bold)
                      .rectTransform.Stretch(sold ? 0 : 42, 0, sold ? 0 : 16, 0);
@@ -441,12 +457,13 @@ namespace LQFarm
             star.preserveAspect = true;
             star.rectTransform.Anchor(UIKit.Left, new Vector2(46, 0), new Vector2(56, 56));
 
+            // the crown spans 46..102; the count and track start after it, not under it
             _count = UIKit.Label(head, "", 24, Theme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
-            _count.rectTransform.Anchor(UIKit.Left, new Vector2(86, 12), new Vector2(260, 28));
+            _count.rectTransform.Anchor(UIKit.Left, new Vector2(118, 12), new Vector2(260, 28));
             _count.rectTransform.pivot = new Vector2(0, 0.5f);
 
             var track = UIKit.Node("track", head);
-            track.Anchor(UIKit.Left, new Vector2(86, -16), new Vector2(520, 28));
+            track.Anchor(UIKit.Left, new Vector2(118, -16), new Vector2(520, 28));
             track.pivot = new Vector2(0, 0.5f);
             var trackBar = UIKit.Bar(track, new Color(0.30f, 0.24f, 0.18f, 0.75f), Theme.Amber, 14);
             trackBar.transform.parent.GetComponent<RectTransform>().Stretch();
@@ -457,7 +474,8 @@ namespace LQFarm
                 int m = GameData.CollectMilestones[i];
                 float x = m / (float)GameData.CollectMilestones.Last() * 520f;
                 var node = UIKit.Node("m", track);
-                node.Anchor(UIKit.Left, new Vector2(Mathf.Min(x, 512f), 0), new Vector2(34, 34));
+                // centred ON the value: Anchor(Left) takes the left edge, so shift by half a node
+                node.Anchor(UIKit.Left, new Vector2(Mathf.Min(x, 520f) - 17f, 0), new Vector2(34, 34));
                 UIKit.Img(node, Theme.Circle(), Theme.Cream, "bg").rectTransform.Stretch();
                 var ring = UIKit.Img(node, Theme.Ring(0.16f), Theme.AmberDeep, "ring");
                 ring.rectTransform.Stretch();
@@ -466,9 +484,9 @@ namespace LQFarm
                 _nodes.Add((m, ring));
             }
 
-            var claim = UIKit.Btn(head, "Nhận thưởng", Theme.Amber, Theme.AmberDeep, 22, 24,
+            _claim = UIKit.Btn(head, "Nhận thưởng", Theme.Amber, Theme.AmberDeep, 22, 24,
                                   () => app.ClaimAllMilestones());
-            claim.GetComponent<RectTransform>().Anchor(UIKit.Right, new Vector2(-16, 0), new Vector2(196, 54));
+            _claim.GetComponent<RectTransform>().Anchor(UIKit.Right, new Vector2(-16, 0), new Vector2(196, 54));
 
             var box = UIKit.Node("box", Body);
             box.anchorMin = new Vector2(0, 0); box.anchorMax = new Vector2(1, 1);
@@ -481,6 +499,7 @@ namespace LQFarm
         }
 
         Image _milestoneFill;
+        Button _claim;
         readonly List<(int need, Image ring)> _nodes = new List<(int, Image)>();
 
         public override void Refresh()
@@ -489,6 +508,14 @@ namespace LQFarm
             _count.text = "Đã sưu tầm " + total + "/" + GameData.CollectTotal;
             _milestoneFill.fillAmount = Mathf.Clamp01(total / (float)GameData.CollectMilestones.Last());
             foreach (var n in _nodes) n.ring.color = total >= n.need ? Theme.Green : Theme.Cream3;
+
+            // A bright amber "Nhận thưởng" at 0/140 read as a reward waiting. It is only lit when
+            // a milestone has actually been reached and not yet taken.
+            bool claimable = false;
+            foreach (int m in GameData.CollectMilestones)
+                if (total >= m && !GS.Local.claimedMs.Contains(m)) claimable = true;
+            _claim.interactable = claimable;
+            UIKit.Restyle(_claim, claimable ? Theme.Amber : Theme.Cream3, claimable ? (Color?)null : Theme.InkSoft);
 
             foreach (Transform c in _list) UnityEngine.Object.Destroy(c.gameObject);
 
@@ -522,8 +549,12 @@ namespace LQFarm
                     var seed = GameData.Get(it.crop);
                     if (seed == null) continue;
                     bool got = GS.Local.collected.Contains(it.Key);
-                    var cell = ItemCell(block, Art.Icon(seed.art, it.v), Art.VariantTint(seed.art, it.v),
-                                        seed.r, null, got ? it.name : "Chưa có", !got);
+                    // Blacked out until harvested, as the design asks. A faded full-colour picture
+                    // gives away what the mutation looks like, which is the one thing the book is
+                    // for — finding out.
+                    var tint = got ? Art.VariantTint(seed.art, it.v) : new Color(0.20f, 0.16f, 0.13f, 1f);
+                    var cell = ItemCell(block, Art.Icon(seed.art, it.v), tint,
+                                        seed.r, null, got ? it.name : "???", !got);
                     cell.Anchor(UIKit.BottomLeft, new Vector2(20 + i * 108, 12), new Vector2(98, 98));
                 }
 

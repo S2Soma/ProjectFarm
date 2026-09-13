@@ -102,7 +102,39 @@ def exclamation(size=192):
     return img
 
 
-for fn, name in ((droplet, "droplet"), (checkmark, "check"), (exclamation, "alert")):
+def grid_more(size=192):
+    """The "more" affordance: a 2x2 of rounded squares.
+
+    Three horizontal dots is the usual idiom, but it is drawn at the bottom of a VERTICAL
+    rail here, where a horizontal ellipsis reads as a separator between the buttons above
+    and below it rather than as a button itself. A 2x2 block reads as "the rest of them"
+    at 44 px, which is the size it actually renders at."""
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    px = img.load()
+    half = size * 0.155          # half-extent of one square
+    gap = size * 0.055
+    r = size * 0.052             # corner radius
+    centres = []
+    for sy in (-1, 1):
+        for sx in (-1, 1):
+            centres.append((size / 2 + sx * (half + gap), size / 2 + sy * (half + gap)))
+
+    for y in range(size):
+        for x in range(size):
+            fx, fy = x + 0.5, y + 0.5
+            best = 1e9
+            for cx, cy in centres:
+                dx = max(0.0, abs(fx - cx) - (half - r))
+                dy = max(0.0, abs(fy - cy) - (half - r))
+                best = min(best, math.hypot(dx, dy) - r)
+            a = max(0.0, min(1.0, 0.5 - best))
+            if a > 0:
+                px[x, y] = (255, 255, 255, int(a * 255))
+    return img
+
+
+for fn, name in ((droplet, "droplet"), (checkmark, "check"), (exclamation, "alert"),
+                 (grid_more, "more")):
     im = fn()
     im.save(os.path.join(OUT, name + ".png"))
     print(name + ".png", im.size)

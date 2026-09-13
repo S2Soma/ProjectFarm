@@ -181,8 +181,11 @@ namespace LQFarm
         }
 
         /// <summary>Circular icon button (HUD rails, close buttons).</summary>
+        /// <param name="iconTint">Defaults to white. The grey face is nearly white in its top
+        /// half, so a white glyph on it loses its upper half entirely — a 2x2 "more" icon read as
+        /// a domino. Anything drawn on grey passes dark ink here.</param>
         public static Button IconBtn(Transform parent, Sprite icon, Color face, float iconScale = 0.62f,
-                                     Action onClick = null, string caption = null)
+                                     Action onClick = null, string caption = null, Color? iconTint = null)
         {
             var root = Node("iconbtn", parent);
             var sh = Img(root, Theme.Circle(), new Color(0, 0, 0, 0.25f), "shadow");
@@ -194,7 +197,7 @@ namespace LQFarm
 
             if (icon != null)
             {
-                var ic = Img(circle.transform, icon, Color.white, "icon");
+                var ic = Img(circle.transform, icon, iconTint ?? Color.white, "icon");
                 ic.preserveAspect = true;
                 ic.rectTransform.anchorMin = ic.rectTransform.anchorMax = Center;
                 ic.rectTransform.pivot = Center;
@@ -237,11 +240,21 @@ namespace LQFarm
 
         // ---------------- compound widgets ----------------
         /// <summary>A rounded progress bar. Returns the fill image; drive it with SetFill.</summary>
+        static bool Near(Color a, Color b)
+        {
+            return Mathf.Abs(a.r - b.r) < 0.03f && Mathf.Abs(a.g - b.g) < 0.03f && Mathf.Abs(a.b - b.b) < 0.03f;
+        }
+
         public static Image Bar(Transform parent, Color track, Color fill, int radius = 10)
         {
             var bg = Img(parent, Theme.Skin.BarTrack, track, "bar");
             bg.type = Image.Type.Sliced;
-            var f = Img(bg.transform, Theme.Skin.BarFor(fill), Color.white, "fill");
+            // Only green and blue have painted bar sprites. Everything else used to snap to the
+            // nearest of those or to plain white — purple energy drew blue, amber milestones and
+            // the gold/bronze contract grades drew white. Other colours now tint the white bar.
+            bool painted = Near(fill, Theme.Green) || Near(fill, Theme.Blue);
+            var f = Img(bg.transform, painted ? Theme.Skin.BarFor(fill) : Theme.Skin.BarWhite,
+                        painted ? Color.white : fill, "fill");
             f.type = Image.Type.Sliced;
             f.rectTransform.anchorMin = new Vector2(0, 0);
             f.rectTransform.anchorMax = new Vector2(1, 1);
@@ -266,17 +279,20 @@ namespace LQFarm
             stroke.type = Image.Type.Sliced;
             stroke.rectTransform.Stretch(2, 2, 2, 2);
 
+            // Anchor(Left) puts the LEFT EDGE at x, not the centre (see CLAUDE.md), so the old
+            // icon at x=26 spanned 26..70 while the value started at 52 — every balance was
+            // printed across the coin. The icon now ends at 50 and the value starts after it.
             if (icon != null)
             {
                 var holder = Node("ic", root);
-                holder.Anchor(Left, new Vector2(26, 0), new Vector2(44, 44));
+                holder.Anchor(Left, new Vector2(8, 0), new Vector2(42, 42));
                 var ic = Img(holder, icon, Color.white, "icon");
                 ic.preserveAspect = true;
                 ic.rectTransform.Stretch(2, 2, 2, 2);
             }
 
             var t = LabelOutlined(root, value, 24, Color.white, TextAnchor.MiddleRight);
-            t.rectTransform.Stretch(52, 0, onPlus != null ? 46 : 16, 0);
+            t.rectTransform.Stretch(icon != null ? 54 : 16, 0, onPlus != null ? 46 : 16, 0);
 
             if (onPlus != null)
             {

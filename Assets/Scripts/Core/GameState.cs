@@ -1,59 +1,132 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 
 namespace LQFarm
 {
-    [Serializable]
+    public enum PlotState : byte
+    {
+        Locked,
+        Empty,
+        Growing,
+        /// <summary>Growing, and a watering window is open right now.</summary>
+        Thirsty,
+        Ready,
+    }
+
     public class Plot
     {
         public bool locked = true;
         public string crop;
-        public double plantedAt;
+
+        /// <summary>Unix ms UTC. Absolute, so growth needs no offline catch-up pass — elapsed
+        /// time is a subtraction, not an integral over the hours the app was closed.</summary>
+        public long plantedAt;
+
+        /// <summary>Nominal grow seconds, frozen at plant.</summary>
         public float dur;
-        public bool watered;
+
+        /// <summary>Seconds removed by watering. Replaces the old one-shot <c>bonus</c>.</summary>
+        public float cut;
+
+        /// <summary>One bit per watering window already consumed (bit 0 = first window).
+        /// Consumed windows can never be reclaimed, which is what stops an offline player from
+        /// banking them — see <see cref="WaterSys"/>.</summary>
+        public byte waterMask;
+
+        /// <summary>Which of those windows a visitor used. Keeps a friend's help from being
+        /// credited twice, and is what "Hà đã tưới 3 cây của bạn" will read.</summary>
+        public byte friendMask;
+
+        /// <summary>How many windows this crop was planted with. Frozen so a balance change
+        /// never rewrites a crop that is already in the ground.</summary>
+        public byte windowCount;
+
         public int variant;
-        public float bonus;
+
+        // ---- snapshot, frozen at plant, never revalued ----
+        /// <summary>The weather this crop was planted under. Stored rather than recomputed so a
+        /// player who was offline can never have value taken away, and so elapsed growth stays a
+        /// subtraction instead of an integral over the hours the app was closed.</summary>
+        public byte plantWeather;
+
+        /// <summary>Sell multiplier from weather x tag, resolved at plant. One number instead of
+        /// re-deriving the chain at harvest — the chain's inputs have rotated by then.</summary>
+        public float sellMul = 1f;
+        public float xpMul = 1f;
     }
 
-    [Serializable] public class TaskRec { public int p; public bool claimed; }
+    /// <summary>One island: sixteen plots and the state that belongs to the land itself.
+    ///
+    /// Exists already, holding exactly one instance, so the save schema is final before the
+    /// multi-island work starts — otherwise that step would need a second migration for data
+    /// that never had to change shape.</summary>
+    public class Island
+    {
+        public int id;
+        public bool unlocked;
+        public long unlockedAt;
+        public readonly List<Plot> plots = new List<Plot>();
 
-    [Serializable]
+        /// <summary>Crops handed over toward this island's tribute, by crop id. Lives on the
+        /// LOCKED island rather than in a global ledger so the sign painted on it can read
+        /// straight off the thing the player is looking at.</summary>
+        public Dictionary<string, int> tribute;
+
+        public Island(int id, bool unlocked) { this.id = id; this.unlocked = unlocked; }
+        public Island() { }
+    }
+
+    public class TaskRec { public int p; public bool claimed; }
+
+    /// <summary>One short-term contract occupying a board slot.
+    ///
+    /// Definition and state are deliberately in the same object: the definition is reproducible
+    /// from (worldSeed, slot, genCycle), but storing it flat means a save round-trip cannot
+    /// disagree with what the player was looking at — which is the kind of mismatch that shows up
+    /// as a mission changing its own requirements between sessions.</summary>
+    public class MissionRec
+    {
+        public int slot;
+        public long genCycle;
+
+        public string type;
+        public string cropId;      // null = any crop
+        public Grade grade;
+        public int need;
+
+        public int p;
+        public bool claimed;
+
+        /// <summary>Unix ms. Passing it without claiming breaks the streak.</summary>
+        public long expiresAt;
+
+        /// <summary>When an empty slot becomes eligible for a new contract.</summary>
+        public long refillAt;
+
+        public bool Empty => string.IsNullOrEmpty(type);
+        public bool Done => p >= need;
+    }
+
     public class Stats
     {
         public int harvest, plant, water, sell, chest, visit, mutate;
     }
 
-    /// <summary>Flat, JsonUtility-friendly mirror of one <see cref="PlayerState"/>.
+    /// <summary>Wall-clock state that has to survive a restart.
     ///
-    /// Replaced wholesale in the next step by a Newtonsoft schema — JsonUtility silently drops
-    /// JSON keys it has no field for, which is fatal once a save has to survive a newer client
-    /// or a server. Kept as-is here so this step changes behaviour in no way at all.</summary>
-    [Serializable]
-    public class SaveData
+    /// <see cref="lastSeenUtc"/> is the important one: it is a monotonic floor under
+    /// <see cref="GS.Now"/>, so winding the device clock backwards is a no-op rather than a way
+    /// to re-claim the daily reset. This is not anti-cheat — a determined player edits the save
+    /// file — it exists so an honest player crossing a timezone or receiving an NTP correction
+    /// does not lose crops, and so the trivial exploit stops being trivial.</summary>
+    public class Clock
     {
-        public int version = 1;
-        public int lv = 1, coin = 5000;
-        public long xp, energy;
-        public long worldSeed;
-        public List<Plot> plots = new List<Plot>();
-        public int[] chests = new int[4];
-        public Stats stats = new Stats();
-        public int stealLeft = 20;
-        public long day;
-        public double buffMutateUntil;
-
-        // dictionaries flattened to parallel lists
-        public List<string> seedK = new List<string>(); public List<int> seedV = new List<int>();
-        public List<string> storeK = new List<string>(); public List<int> storeV = new List<int>();
-        public List<string> misK = new List<string>();  public List<TaskRec> misV = new List<TaskRec>();
-        public List<string> dayK = new List<string>();  public List<TaskRec> dayV = new List<TaskRec>();
-        public List<string> collected = new List<string>();
-        public List<string> claimedSets = new List<string>();
-        public List<int> claimedMs = new List<int>();
-        public List<string> shopBought = new List<string>();
-        public List<string> visited = new List<string>();
+        public long lastSeenUtc;
+        public long savedAtUtc;
+        public double savedAtMono;
+        public int resetOffsetMinutes;
+        public bool clockSuspect;
     }
 
     /// <summary>The game's entry point into state: who is playing, whose farm is on screen,
@@ -68,8 +141,6 @@ namespace LQFarm
     public static class GS
     {
         public const int PlotCount = 16;
-        static string SavePath => System.IO.Path.Combine(Application.persistentDataPath, "lqfarm.save.json");
-
         /// <summary>The player holding the phone. Wallet, level, inventory, progress.</summary>
         public static PlayerState Local = new PlayerState();
 
@@ -88,78 +159,58 @@ namespace LQFarm
             set { _viewing = ReferenceEquals(value, Local) ? null : value; }
         }
 
-        public static double Now => (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
+        static readonly DateTime Epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        /// <summary>Unix ms UTC, clamped so it can never go backwards within a save.
+        ///
+        /// Every rule in the game reads time through here. A player who winds the device clock
+        /// back therefore freezes time instead of rewinding it: crops do not un-grow, expired
+        /// things do not un-expire, and — the one that actually mattered — the daily reset in
+        /// <see cref="PlayerState.CheckDay"/> cannot be triggered a second time.</summary>
+        public static long Now
+        {
+            get
+            {
+                long raw = (long)(DateTime.UtcNow - Epoch).TotalMilliseconds;
+                var c = Local?.clock;
+                if (c == null) return raw;
+                if (raw < c.lastSeenUtc) { c.clockSuspect = true; return c.lastSeenUtc; }
+                c.lastSeenUtc = raw;
+                return raw;
+            }
+        }
 
         // ---------------- persistence ----------------
-        public static void Save()
-        {
-            var s = Local;
-            var d = new SaveData
-            {
-                lv = s.lv, coin = s.coin, xp = s.xp, energy = s.energy, worldSeed = s.worldSeed,
-                plots = s.plots, chests = s.chests, stats = s.stats,
-                stealLeft = s.stealLeft, day = s.day, buffMutateUntil = s.buffMutateUntil,
-                collected = s.collected.ToList(),
-                claimedSets = s.claimedSets.ToList(),
-                claimedMs = s.claimedMs.ToList(),
-                shopBought = s.shopBought.ToList(),
-                visited = s.visited.ToList(),
-            };
-            foreach (var kv in s.seeds)    { d.seedK.Add(kv.Key);  d.seedV.Add(kv.Value); }
-            foreach (var kv in s.store)    { d.storeK.Add(kv.Key); d.storeV.Add(kv.Value); }
-            foreach (var kv in s.missions) { d.misK.Add(kv.Key);   d.misV.Add(kv.Value); }
-            foreach (var kv in s.daily)    { d.dayK.Add(kv.Key);   d.dayV.Add(kv.Value); }
-
-            try { System.IO.File.WriteAllText(SavePath, JsonUtility.ToJson(d)); }
-            catch (Exception e) { Debug.LogWarning("Không lưu được tiến trình: " + e.Message); }
-        }
+        public static void Save() { SaveIO.Save(Local); }
 
         public static void Load()
         {
             var s = Local;
-            string raw = null;
-            try { if (System.IO.File.Exists(SavePath)) raw = System.IO.File.ReadAllText(SavePath); }
-            catch (Exception) { /* fall through to a new game */ }
+            SaveIO.Load(s);
 
-            if (string.IsNullOrEmpty(raw)) { s.NewGame(); }
-            else
-            {
-                SaveData d = null;
-                try { d = JsonUtility.FromJson<SaveData>(raw); } catch (Exception) { }
-                if (d == null) { s.NewGame(); }
-                else Apply(s, d);
-            }
-
+            s.EnsureWorldSeed();
             s.PruneUnknown();
             s.SyncPlots();
-            s.CheckDay();
+            ApplyOffline(s);
             if (s.seeds.Count == 0 && s.stats.plant == 0) s.SeedStarter();
         }
 
-        static void Apply(PlayerState s, SaveData d)
+        /// <summary>Everything time-driven that a closed app could have missed.
+        ///
+        /// The list is deliberately two items long. Growth, watering windows, weather and crop
+        /// tags are all pure functions of stored timestamps, so none of them needs a catch-up
+        /// pass — that is the payoff for freezing their inputs at plant time. What is left is
+        /// genuinely stateful, and each is capped at ONE cycle no matter how long the player was
+        /// away: thirty days offline must not pay out thirty daily resets.</summary>
+        static void ApplyOffline(PlayerState s)
         {
-            s.lv = Mathf.Max(1, d.lv); s.coin = d.coin; s.xp = d.xp; s.energy = d.energy;
-            s.worldSeed = d.worldSeed;
-            s.plots.Clear(); if (d.plots != null) s.plots.AddRange(d.plots);
-            s.chests = (d.chests != null && d.chests.Length == 4) ? d.chests : new int[4];
-            s.stats = d.stats ?? new Stats();
-            s.stealLeft = d.stealLeft; s.day = d.day; s.buffMutateUntil = d.buffMutateUntil;
-
-            s.seeds.Clear();    for (int i = 0; i < d.seedK.Count && i < d.seedV.Count; i++) s.seeds[d.seedK[i]] = d.seedV[i];
-            s.store.Clear();    for (int i = 0; i < d.storeK.Count && i < d.storeV.Count; i++) s.store[d.storeK[i]] = d.storeV[i];
-            s.missions.Clear(); for (int i = 0; i < d.misK.Count && i < d.misV.Count; i++) s.missions[d.misK[i]] = d.misV[i];
-            s.daily.Clear();    for (int i = 0; i < d.dayK.Count && i < d.dayV.Count; i++) s.daily[d.dayK[i]] = d.dayV[i];
-
-            s.collected.Clear();   foreach (var k in d.collected)   s.collected.Add(k);
-            s.claimedSets.Clear(); foreach (var k in d.claimedSets) s.claimedSets.Add(k);
-            s.claimedMs.Clear();   foreach (var k in d.claimedMs)   s.claimedMs.Add(k);
-            s.shopBought.Clear();  foreach (var k in d.shopBought)  s.shopBought.Add(k);
-            s.visited.Clear();     foreach (var k in d.visited)     s.visited.Add(k);
+            s.CheckDay();
+            s.SyncContracts();
         }
 
         public static void Reset()
         {
-            try { if (System.IO.File.Exists(SavePath)) System.IO.File.Delete(SavePath); } catch (Exception) { }
+            SaveIO.Delete();
             Local.NewGame();
         }
     }

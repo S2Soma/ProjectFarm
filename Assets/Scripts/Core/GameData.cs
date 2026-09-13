@@ -10,13 +10,26 @@ namespace LQFarm
         public string id, name, art, badge;
         public int r, lv, price, grow, xp, en, sell, colors;
 
+        /// <summary>Fruits per harvest.
+        ///
+        /// <see cref="sell"/> is the value of a WHOLE harvest, so per-fruit price is sell/fruits
+        /// and yield changes nothing about revenue. That is deliberate: making yield a revenue
+        /// multiplier would six-times the economy overnight the moment a six-fruit crop unlocked.
+        /// What yield actually does is split the crops into volume and value — a watermelon is
+        /// one big fruit, cherries come in a punnet — which is what makes island tribute
+        /// ("1080 Anh Đào") reachable and gives the two kinds of crop different jobs.</summary>
+        public int fruits = 1;
+
         public Seed(string id, string name, string art, int r, int lv, int price,
-                    int grow, int xp, int en, int sell, int colors, string badge)
+                    int grow, int xp, int en, int sell, int colors, string badge, int fruits = 1)
         {
             this.id = id; this.name = name; this.art = art; this.r = r; this.lv = lv;
             this.price = price; this.grow = grow; this.xp = xp; this.en = en;
-            this.sell = sell; this.colors = colors; this.badge = badge;
+            this.sell = sell; this.colors = colors; this.badge = badge; this.fruits = fruits;
         }
+
+        /// <summary>What one fruit sells for before any multiplier.</summary>
+        public int PerFruit => Mathf.Max(1, Mathf.RoundToInt(sell / (float)Mathf.Max(1, fruits)));
     }
 
     public struct LevelInfo
@@ -80,37 +93,37 @@ namespace LQFarm
         // rarity: 0 thuong | 1 hiem | 2 su thi | 3 huyen thoai
         public static readonly Seed[] Seeds =
         {
-            new Seed("carrot",     "Cà Rốt",       "carrot",     0, 1,  0,    40,  8,   2,  42,   4, null),
-            new Seed("wheat",      "Lúa Mì",       "wheat",      0, 1,  83,   55,  12,  2,  118,  4, null),
-            new Seed("tomato",     "Cà Chua",      "tomato",     0, 2,  224,  80,  20,  3,  268,  4, null),
-            new Seed("potato",     "Khoai Tây",    "potato",     0, 3,  251,  92,  24,  3,  302,  4, null),
-            new Seed("corn",       "Ngô",          "corn",       0, 4,  298,  105, 28,  3,  352,  4, null),
+            new Seed("carrot",     "Cà Rốt",       "carrot",     0, 1,  0,    40,  8,   2,  42,   4, null, 6),
+            new Seed("wheat",      "Lúa Mì",       "wheat",      0, 1,  83,   55,  12,  2,  118,  4, null, 5),
+            new Seed("tomato",     "Cà Chua",      "tomato",     0, 2,  224,  80,  20,  3,  268,  4, null, 5),
+            new Seed("potato",     "Khoai Tây",    "potato",     0, 3,  251,  92,  24,  3,  302,  4, null, 5),
+            new Seed("corn",       "Ngô",          "corn",       0, 4,  298,  105, 28,  3,  352,  4, null, 4),
 
-            new Seed("mushroom",   "Nấm Rừng",     "mushroom",   1, 5,  137,  70,  42,  4,  176,  4, "exp"),
-            new Seed("leek",       "Tỏi Tây",      "leek",       1, 6,  199,  96,  34,  4,  246,  4, null),
-            new Seed("garlic",     "Hành Bổ",      "garlic",     1, 7,  225,  110, 38,  4,  282,  4, null),
-            new Seed("broccoli",   "Súp Lơ Xanh",  "broccoli",   1, 8,  247,  122, 42,  4,  312,  4, null),
-            new Seed("pepper",     "Ớt Chuông",    "pepper",     1, 9,  266,  134, 46,  5,  338,  4, null),
-            new Seed("eggplant",   "Cà Tím",       "eggplant",   1, 10, 285,  146, 50,  5,  364,  4, null),
-            new Seed("cauliflower","Súp Lơ Trắng", "cauliflower",1, 11, 357,  168, 58,  5,  452,  4, "helm"),
+            new Seed("mushroom",   "Nấm Rừng",     "mushroom",   1, 5,  137,  70,  42,  4,  176,  4, "exp", 4),
+            new Seed("leek",       "Tỏi Tây",      "leek",       1, 6,  199,  96,  34,  4,  246,  4, null, 4),
+            new Seed("garlic",     "Hành Bổ",      "garlic",     1, 7,  225,  110, 38,  4,  282,  4, null, 4),
+            new Seed("broccoli",   "Súp Lơ Xanh",  "broccoli",   1, 8,  247,  122, 42,  4,  312,  4, null, 4),
+            new Seed("pepper",     "Ớt Chuông",    "pepper",     1, 9,  266,  134, 46,  5,  338,  4, null, 4),
+            new Seed("eggplant",   "Cà Tím",       "eggplant",   1, 10, 285,  146, 50,  5,  364,  4, null, 4),
+            new Seed("cauliflower","Súp Lơ Trắng", "cauliflower",1, 11, 357,  168, 58,  5,  452,  4, "helm", 4),
 
-            new Seed("pumpkin",    "Bí Ngô",       "pumpkin",    2, 12, 285,  150, 62,  6,  392,  4, null),
-            new Seed("radish",     "Củ Cải",       "radish",     2, 13, 385,  211, 65,  5,  406,  4, "sprout"),
-            new Seed("beetroot",   "Củ Dền",       "beetroot",   2, 14, 412,  224, 72,  6,  528,  4, "helm"),
-            new Seed("grape",      "Nho Tím",      "grape",      2, 15, 448,  240, 96,  6,  566,  4, "exp"),
-            new Seed("cabbage",    "Bắp Cải",      "cabbage",    2, 16, 486,  258, 84,  7,  618,  4, "helm"),
-            new Seed("lemon",      "Chanh Vàng",   "lemon",      2, 17, 522,  272, 90,  7,  664,  4, "helm"),
-            new Seed("orange",     "Cam",          "orange",     2, 19, 604,  300, 104, 8,  772,  4, "helm"),
-            new Seed("pear",       "Lê",           "pear",       2, 21, 668,  318, 112, 8,  856,  4, "helm"),
+            new Seed("pumpkin",    "Bí Ngô",       "pumpkin",    2, 12, 285,  150, 62,  6,  392,  4, null, 3),
+            new Seed("radish",     "Củ Cải",       "radish",     2, 13, 385,  211, 65,  5,  406,  4, "sprout", 4),
+            new Seed("beetroot",   "Củ Dền",       "beetroot",   2, 14, 412,  224, 72,  6,  528,  4, "helm", 3),
+            new Seed("grape",      "Nho Tím",      "grape",      2, 15, 448,  240, 96,  6,  566,  4, "exp", 6),
+            new Seed("cabbage",    "Bắp Cải",      "cabbage",    2, 16, 486,  258, 84,  7,  618,  4, "helm", 3),
+            new Seed("lemon",      "Chanh Vàng",   "lemon",      2, 17, 522,  272, 90,  7,  664,  4, "helm", 4),
+            new Seed("orange",     "Cam",          "orange",     2, 19, 604,  300, 104, 8,  772,  4, "helm", 4),
+            new Seed("pear",       "Lê",           "pear",       2, 21, 668,  318, 112, 8,  856,  4, "helm", 3),
 
-            new Seed("peach",      "Táo Đỏ",       "peach",      3, 22, 742,  340, 126, 9,  962,  4, "helm"),
-            new Seed("strawberry", "Dâu Tây",      "strawberry", 3, 23, 806,  356, 168, 9,  1042, 4, "exp"),
-            new Seed("cherries",   "Anh Đào",      "cherries",   3, 24, 874,  372, 142, 10, 1128, 4, "helm"),
-            new Seed("banana",     "Chuối",        "banana",     3, 25, 948,  392, 152, 10, 1224, 4, "helm"),
-            new Seed("watermelon", "Dưa Hấu",      "watermelon", 3, 26, 1026, 410, 164, 11, 1328, 4, "helm"),
-            new Seed("pineapple",  "Dứa",          "pineapple",  3, 28, 1120, 430, 176, 11, 1440, 4, "helm"),
-            new Seed("coconut",    "Dừa",          "coconut",    3, 29, 1180, 448, 188, 12, 1546, 4, "sprout"),
-            new Seed("avocado",    "Bơ Sáp",       "avocado",    3, 30, 1280, 470, 204, 12, 1690, 4, "helm"),
+            new Seed("peach",      "Táo Đỏ",       "peach",      3, 22, 742,  340, 126, 9,  962,  4, "helm", 3),
+            new Seed("strawberry", "Dâu Tây",      "strawberry", 3, 23, 806,  356, 168, 9,  1042, 4, "exp", 6),
+            new Seed("cherries",   "Anh Đào",      "cherries",   3, 24, 874,  372, 142, 10, 1128, 4, "helm", 6),
+            new Seed("banana",     "Chuối",        "banana",     3, 25, 948,  392, 152, 10, 1224, 4, "helm", 5),
+            new Seed("watermelon", "Dưa Hấu",      "watermelon", 3, 26, 1026, 410, 164, 11, 1328, 4, "helm", 2),
+            new Seed("pineapple",  "Dứa",          "pineapple",  3, 28, 1120, 430, 176, 11, 1440, 4, "helm", 2),
+            new Seed("coconut",    "Dừa",          "coconut",    3, 29, 1180, 448, 188, 12, 1546, 4, "sprout", 3),
+            new Seed("avocado",    "Bơ Sáp",       "avocado",    3, 30, 1280, 470, 204, 12, 1690, 4, "helm", 2),
         };
 
         static Dictionary<string, Seed> _byId;
@@ -190,27 +203,40 @@ namespace LQFarm
             new Task("d5", "Thăm nom 5 người bạn",   "visit",   5,  1500, 1500),
         };
 
+        /// <summary>Cosmetics. The sub-labels used to be baked strings like "0/1 có thể mua" and
+        /// the corner badge a baked "22n 10g" — neither ever changed, so the counter still said
+        /// 0/1 after buying and the countdown never counted. Both are now either computed in the
+        /// panel or absent.</summary>
         public static readonly ShopItem[] ShopCoin =
         {
-            new ShopItem("s1", "Khung ảnh Mùa Vàng",  "0/1 có thể mua",  "cheese",   19999, "22n 10g"),
-            new ShopItem("s2", "Hiệu ứng Lá Bay",     "0/1 có thể mua",  "bread",    19999, "22n 10g"),
-            new ShopItem("s3", "Chân dung nông dân",  "0/1 có thể mua",  "egg",      19999, "22n 10g"),
-            new ShopItem("s4", "Mảnh ngọc bí ẩn",     "0/50 có thể mua", "grape",    1200,  "22n 10g"),
-            new ShopItem("s5", "Khung hình bạc",      "0/1 có thể mua",  "salad",    8800,  "22n 10g"),
-            new ShopItem("s6", "Biểu cảm Vui Vẻ",     "0/1 có thể mua",  "honey",    6600,  "22n 10g"),
-            new ShopItem("s7", "Rương bí ẩn",         "0/1 có thể mua",  "coconut",  15000, "31n 10g"),
-            new ShopItem("s8", "Huy hiệu Nhà Nông",   "0/1 có thể mua",  "lemon",    9900,  "22n 10g"),
-            new ShopItem("s9", "Bó hồng nông trại",   "1/1 có thể mua",  "cherries", 3500,  "22n 10g"),
+            new ShopItem("s1", "Khung ảnh Mùa Vàng",  "Trang trí hồ sơ",  "cheese",   19999, ""),
+            new ShopItem("s2", "Hiệu ứng Lá Bay",     "Trang trí hồ sơ",  "bread",    19999, ""),
+            new ShopItem("s3", "Chân dung nông dân",  "Trang trí hồ sơ",  "egg",      19999, ""),
+            new ShopItem("s4", "Mảnh ngọc bí ẩn",     "Trang trí hồ sơ", "grape",    1200,  ""),
+            new ShopItem("s5", "Khung hình bạc",      "Trang trí hồ sơ",  "salad",    8800,  ""),
+            new ShopItem("s6", "Biểu cảm Vui Vẻ",     "Trang trí hồ sơ",  "honey",    6600,  ""),
+            new ShopItem("s7", "Rương bí ẩn",         "Trang trí hồ sơ",  "coconut",  15000, ""),
+            new ShopItem("s8", "Huy hiệu Nhà Nông",   "Trang trí hồ sơ",  "lemon",    9900,  ""),
+            new ShopItem("s9", "Bó hồng nông trại",   "Trang trí hồ sơ",  "cherries", 3500,  ""),
         };
 
+        /// <summary>The goods shelf. Prices here are IGNORED — see <see cref="ShopSys.PriceOf"/>,
+        /// which quotes everything in UNIT so the shelf stays relevant at every level. The int is
+        /// kept only so the type is shared with the cosmetics tab.
+        ///
+        /// "Mở rộng luống đất" is gone. A plot for 12.000 flat undercut the plot ladder, which is
+        /// now the largest coin sink in the game and the reason levelling is worth anything — a
+        /// shop item that sells the same thing cheaper turns that whole system off.</summary>
         public static readonly ShopItem[] ShopGoods =
         {
-            new ShopItem("g1", "Bình tưới vàng",     "Tưới nhanh x3",       "lime",       2600,  "7n 0g", "water3"),
-            new ShopItem("g2", "Phân bón thần kỳ",   "Chín ngay 1 ô",       "avocado",    3800,  "7n 0g", "instant"),
-            new ShopItem("g3", "Bùa đột biến",       "+30% đột biến 5 phút","watermelon", 5200,  "7n 0g", "mutate"),
-            new ShopItem("g4", "Túi hạt ngẫu nhiên", "x5 hạt giống",        "pineapple",  1900,  "7n 0g", "seedbag"),
-            new ShopItem("g5", "Năng lượng thần kỳ", "+300 năng lượng",     "banana",     4400,  "7n 0g", "energy"),
-            new ShopItem("g6", "Mở rộng luống đất",  "Mở 1 ô đất",          "potato",     12000, "7n 0g", "plot"),
+            new ShopItem("g1", "Bình tưới vàng",     "Tưới hết, bỏ qua cữ",   "lime",       0, "", "water3"),
+            new ShopItem("g2", "Phân bón thần kỳ",   "Chín ngay 1 ô",         "avocado",    0, "", "instant"),
+            new ShopItem("g3", "Bùa đột biến",       "+30% đột biến 10 phút", "watermelon", 0, "", "mutate"),
+            new ShopItem("g4", "Túi hạt ngẫu nhiên", "×5 hạt giống",          "pineapple",  0, "", "seedbag"),
+            new ShopItem("g5", "Năng lượng thần kỳ", "+300 năng lượng",       "banana",     0, "", "energy"),
+            new ShopItem("g7", "Dự báo thời tiết",   "Xem trước 12 giờ",      "lemon",      0, "", "forecast"),
+            new ShopItem("g8", "Đổi đơn hàng",       "Làm mới 1 đơn",         "radish",     0, "", "reroll"),
+            new ShopItem("g9", "Nhà kính",           "6 lần gieo né thời tiết xấu", "cauliflower", 0, "", "green"),
         };
 
         public static readonly Friend[] Friends =
@@ -223,36 +249,49 @@ namespace LQFarm
             new Friend("f6", "Vy • Nắng Vàng",    8,  "orange",      "#c9a83a"),
         };
 
+        /// <summary>Collection sets.
+        ///
+        /// The shape is unchanged from the four-element build — a set is still four cells of one
+        /// crop, or four of one tier across crops — because merging rarity into the element axis
+        /// meant the book never needed rebuilding. Twenty-eight crops x five states (plain plus
+        /// four tiers) is 140 cells, against the 135 the old book had.</summary>
         public static readonly CollectionSet[] Collections =
         {
-            new CollectionSet("k1", "Tứ Nguyên Lúa Mì", 12000, 3000, new[]
+            new CollectionSet("k1", "Lúa Mì Tứ Bậc", 12000, 3000, new[]
             {
-                new CollectItem("wheat", 0, "Lúa Mì"),      new CollectItem("wheat", 1, "Lúa Mì Băng"),
-                new CollectItem("wheat", 2, "Lúa Mì Hoả"),  new CollectItem("wheat", 3, "Lúa Mì Lôi"),
+                new CollectItem("wheat", 1, "Lúa Mì Ngọc"),  new CollectItem("wheat", 2, "Lúa Mì Băng"),
+                new CollectItem("wheat", 3, "Lúa Mì Hoả"),   new CollectItem("wheat", 4, "Lúa Mì Lôi"),
             }),
-            new CollectionSet("k2", "Tứ Nguyên Khoai Tây", 14000, 3600, new[]
+            new CollectionSet("k2", "Khoai Tây Tứ Bậc", 14000, 3600, new[]
             {
-                new CollectItem("potato", 0, "Khoai Tây"),     new CollectItem("potato", 1, "Khoai Tây Băng"),
-                new CollectItem("potato", 2, "Khoai Tây Hoả"), new CollectItem("potato", 3, "Khoai Tây Lôi"),
+                new CollectItem("potato", 1, "Khoai Tây Ngọc"), new CollectItem("potato", 2, "Khoai Tây Băng"),
+                new CollectItem("potato", 3, "Khoai Tây Hoả"),  new CollectItem("potato", 4, "Khoai Tây Lôi"),
             }),
-            new CollectionSet("k3", "Tứ Nguyên Cà Chua", 16000, 4200, new[]
+            new CollectionSet("k3", "Cà Chua Tứ Bậc", 16000, 4200, new[]
             {
-                new CollectItem("tomato", 0, "Cà Chua"),     new CollectItem("tomato", 1, "Cà Chua Băng"),
-                new CollectItem("tomato", 2, "Cà Chua Hoả"), new CollectItem("tomato", 3, "Cà Chua Lôi"),
+                new CollectItem("tomato", 1, "Cà Chua Ngọc"), new CollectItem("tomato", 2, "Cà Chua Băng"),
+                new CollectItem("tomato", 3, "Cà Chua Hoả"),  new CollectItem("tomato", 4, "Cà Chua Lôi"),
             }),
-            new CollectionSet("k4", "Vườn Băng Giá", 22000, 5200, new[]
+            new CollectionSet("k4", "Vườn Ngọc Bích", 18000, 4400, new[]
             {
-                new CollectItem("carrot", 1, "Cà Rốt Băng"),  new CollectItem("corn", 1, "Ngô Băng"),
-                new CollectItem("pumpkin", 1, "Bí Ngô Băng"), new CollectItem("grape", 1, "Nho Băng"),
+                new CollectItem("carrot", 1, "Cà Rốt Ngọc"),  new CollectItem("corn", 1, "Ngô Ngọc"),
+                new CollectItem("pumpkin", 1, "Bí Ngô Ngọc"), new CollectItem("grape", 1, "Nho Ngọc"),
             }),
-            new CollectionSet("k5", "Vườn Lôi Điện", 30000, 7000, new[]
+            new CollectionSet("k5", "Vườn Băng Giá", 22000, 5200, new[]
             {
-                new CollectItem("carrot", 3, "Cà Rốt Lôi"),     new CollectItem("corn", 3, "Ngô Lôi"),
-                new CollectItem("strawberry", 3, "Dâu Tây Lôi"),new CollectItem("watermelon", 3, "Dưa Hấu Lôi"),
+                new CollectItem("carrot", 2, "Cà Rốt Băng"),  new CollectItem("corn", 2, "Ngô Băng"),
+                new CollectItem("pumpkin", 2, "Bí Ngô Băng"), new CollectItem("grape", 2, "Nho Băng"),
+            }),
+            new CollectionSet("k6", "Vườn Lôi Điện", 30000, 7000, new[]
+            {
+                new CollectItem("carrot", 4, "Cà Rốt Lôi"),     new CollectItem("corn", 4, "Ngô Lôi"),
+                new CollectItem("strawberry", 4, "Dâu Tây Lôi"),new CollectItem("watermelon", 4, "Dưa Hấu Lôi"),
             }),
         };
 
         public static readonly int[] CollectMilestones = { 6, 20, 45, 80 };
-        public const int CollectTotal = 135;
+
+        /// <summary>28 crops x 5 states (plain + four mutation tiers).</summary>
+        public static readonly int CollectTotal = Seeds.Length * Art.Elements.Length;
     }
 }

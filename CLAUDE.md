@@ -51,6 +51,58 @@ response file bằng tay**:
   giấu mọi assembly `UnityEditor*` để bắt được lỗi game code lỡ gọi API Editor — thứ compile được
   trong Editor nhưng vỡ khi build player.
 
+## Bộ kiểm tra (chạy từ menu Unity, `Tools ▸ LQ Farm`)
+
+Chạy cả mười sau mỗi bước của `REDESIGN.md`. Đều là editor script thuần, không cần vào Play.
+
+| Menu | Kiểm gì |
+|---|---|
+| **Kiểm tra kiến trúc** | `GS` chỉ có 7 static; `Assets/Scripts/Farm/` không đọc `GS.Local` |
+| **Kiểm tra file lưu** | round-trip đủ trường, giữ khoá lạ, từ chối v1 / bản tương lai / file hỏng |
+| **Kiểm tra tưới nước** | 24 thời gian trồng: tổng giảm đúng 20%, lượt không chồng, **lượt cuối kịp mở**, offline không tích luỹ |
+| **Kiểm tra chạm vs kéo** | kéo trên ô đất KHÔNG được tính là chạm (kể cả khi nền tảng không gửi sự kiện drag) |
+| **Kiểm tra thời tiết & tag** | 24 seed × 20.000 giờ: không lặp liền, Bão/Hạn không nối nhau, 24 giờ đầu yên ả, phân bố hợp lý, tag 2/2/2 theo bậc |
+| **Kiểm tra đột biến & số quả** | bậc tăng đều, **luật không-nhân-hai** (huyền thoại đúng ×10 chứ không ×25), trần thời gian, giá theo quả, bảo hiểm xui |
+| **Kiểm tra nhiệm vụ** | hạng tăng đều, hết hạn phá chuỗi, offline **không trả bù**, trần ngày, đơn chỉ định cây ×1,8 |
+| **Kiểm tra đảo & ô đất** | **ô đất khít nhau, thẳng hàng, không chồng** (đừng "sửa" art bị chồng bằng cách nới khe lại), tên ≤8 ký tự (vừa ô phân trang), cây cống nạp **nằm trong 6 cấp gần nhất**, cống nạp cày nổi trong 1 ngày, thang giá ô đất tăng đều và **dưới 1 ngày thu nhập**, nộp tiêu **quả thường trước**, mở đảo đúng thứ tự, đặc quyền nhân dồn |
+| **Kiểm tra bản đồ & gieo trồng** | nút nhanh mở theo thứ tự Thu hoạch → Gieo → Tưới, sheet hạt giống xếp hạt đang có trước và không hiện hạt chưa mở, cầu mây nối đúng hai đảo, mỗi kiểu thời tiết có diện mạo đảo riêng |
+| **Kiểm tra cửa hàng** | mọi giá bám theo UNIT (3–40 lần thu hoạch ở **mọi cấp 1–30**), không còn bán ô đất, nhà kính **chỉ trừ lượt khi thời tiết xấu**, dự báo bật/tắt đúng |
+
+`Dev: …` là công cụ dựng cảnh để chụp ảnh đối chiếu, chỉ chạy trong Play mode.
+**Dev: xem thời tiết kế tiếp** đổi hình bản đồ qua 6 kiểu thời tiết (chỉ hình ảnh, không đổi giá trị);
+**Dev: thời tiết thật** trả về giờ thật. Ép thời tiết phải dùng `WeatherFx.ForceWeather` (có giữ) — nếu
+không, tick mỗi giây của game sẽ kéo bản đồ về thời tiết thật ngay giữa lúc chụp.
+
+## Bẫy layout đã gặp
+
+`UIKit.Anchor(rt, anchor, pos, size)` đặt **`pivot = anchor`**. Nghĩa là:
+
+- `UIKit.Left` → `pos.x` là **mép trái**, không phải tâm
+- `UIKit.Right` → `pos.x` là **mép phải** (giá trị âm tính từ cạnh phải)
+- `UIKit.TopLeft` → `pos` là góc trên-trái
+
+Đọc nhầm thành tâm đã khiến huy hiệu hạng nằm đè lên thanh tiến trình trong bảng nhiệm vụ.
+
+Và `UIKit.Label` dùng `HorizontalWrapMode.Overflow`: **mọi nhãn tiếng Việt tràn im lặng** — không
+xuống dòng, không cắt "…", chỉ chạy đè lên hàng xóm. Nên rect quá hẹp **không** bị cắt, nó đâm vào
+thứ bên cạnh. Mỗi hàng có nhiều cột phải ghi rõ ranh giới cột bằng hằng số, đừng đoán từng widget.
+
+Tiếng Việt chồng hai dấu (`ế`, `ộ`, `ữ`) nên hộp dòng cần **≥ 1,45 × cỡ chữ**, không phải 1,2 như
+chữ Latin.
+
+`UIKit.Bar` chỉ có sprite vẽ sẵn cho **xanh lá và xanh dương**; màu khác được tô lên thanh trắng.
+Và **đừng gọi `string.Replace("", …)`** — nó ném exception; từng làm số xu trên HUD đứng im.
+
+Ruộng dùng `Art/beds/` (sinh bởi `Tools/gen_beds.py`), **không** dùng `Art/farm/tile_*`: tile vẽ tay
+có cọc ở 4 góc nên không đặt khít được. Mọi thứ trong một ô vẫn vẽ ở hệ 168×84 và nhân
+`IslandView.PlotScale`. **Trạng thái ô thể hiện trên art của ô**, không dùng icon: khát = đất nứt + viền
+xanh, chín = viền vàng + lấp lánh, đã tưới = đất ướt sẫm. Đồng hồ nằm dưới lớp cây. Không đặt thứ gì
+đè lên cây.
+
+Mỗi đảo có tranh riêng ở `Art/islands/` (sinh bởi `Tools/gen_islands.py`, 1600×1164, có mipmap) — chủ đề
+theo tên đảo. Ảnh thế giới (đảo, ô, rào, cây, mây) phải bật mipmap + trilinear: bản đồ zoom từ 0,14× đến
+1,35×, thiếu mip là vỡ nét khi zoom xa.
+
 ## Quy tắc kiến trúc (có cưỡng chế)
 
 `Assets/Editor/ArchitectureGuard.cs` **làm fail build** nếu vi phạm. Chạy tay:

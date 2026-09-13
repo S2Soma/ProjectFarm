@@ -4,7 +4,9 @@
 > Toàn bộ file này nói về bản game cũ (1 đảo, 16 ô, không thời tiết/tag).
 > Plan mới đã chốt hướng: 6 đảo trên một canvas pan/zoom, thời tiết 6 trạng thái đổi mỗi giờ,
 > tag cây xoay 12 giờ, 4 bậc đột biến, tưới theo lượt, nhiệm vụ có hạng, shop vật phẩm giữ lại.
-> Lộ trình 11 bước ở `REDESIGN.md` §7. Bước 0 (tách `GS` thành `PlayerState`) **đã xong**. Bước tiếp theo: **bước 1 — đổi serialiser sang Newtonsoft**.
+> Lộ trình 11 bước ở `REDESIGN.md` §7. **Đã xong cả 11 bước (0–11).**
+> Việc còn lại **không phải code**: art hướng A theo `ART_SPEC.md` (tôi không gen được ảnh),
+> âm thanh, dọn thư mục, và build lên máy thật để kiểm vùng an toàn.
 > Các task bên dưới vẫn đúng ở phần art và dọn thư mục; phần gameplay đã bị plan mới thay thế.
 
 > **Đã chốt hướng A (2026-09-12):** thống nhất toàn bộ art theo phong cách **vẽ tay**,

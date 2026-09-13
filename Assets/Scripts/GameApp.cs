@@ -17,9 +17,18 @@ namespace LQFarm
         public static GameApp I { get; private set; }
 
         RectTransform _root, _world, _overlayLayer, _popupLayer, _toastLayer;
+
+        /// <summary>Sky, hills, sea and clouds. Shifted against the camera so the world reads as
+        /// something the player moves through rather than islands sliding over a painted
+        /// backdrop — see <see cref="Parallax"/>.</summary>
+        RectTransform _bgLayer;
         Canvas _canvas;
-        FarmView _farm;
+        ArchipelagoView _farm;
+        /// <summary>The HUD needs to count what is ready, waterable and plantable every frame it
+        /// renders; it does not need to act on any of it.</summary>
+        public ArchipelagoView Farm => _farm;
         Hud _hud;
+        public Hud Hud => _hud;
 
         // modal frame
         RectTransform _scrim, _card;
@@ -72,20 +81,35 @@ namespace LQFarm
 
             _world = Layer("world", 2, true);
 
-            _farm = gameObject.AddComponent<FarmView>();
+            _farm = gameObject.AddComponent<ArchipelagoView>();
             _farm.Build(_world);
             _farm.onPlotTapped = OpenPlot;
+            _farm.onIslandTapped = i => Open(new IslandPanel(this, i));
+
+            // Weather falls across the islands but never across a button: its own layer, above
+            // the world and below the HUD, and not interactive.
+            _weather = gameObject.AddComponent<WeatherFx>();
+            _weather.Init(_scene, Layer("weather", 3, false), _farm);
 
             _hud = new Hud();
-            _hud.Build(Layer("hud", 3, true, true), this);
+            _hud.Build(Layer("hud", 4, true, true), this);
             _farm.storeAnchorWorld = () => _hud.WarehouseWorld;
 
-            _popupLayer = Layer("popups", 4, true, true);
-            _overlayLayer = Layer("overlay", 5, true, true);
-            _toastLayer = Layer("toasts", 6, false, true);
+            _popupLayer = Layer("popups", 5, true, true);
+            _overlayLayer = Layer("overlay", 6, true, true);
+            _toastLayer = Layer("toasts", 7, false, true);
 
             _farm.RenderAll();
             _hud.Render(true);
+            _weather.SetWeather(WeatherSys.Now(GS.Local));
+            _farm.onIslandChanged = _ =>
+            {
+                _tickingDirty = true;
+                ClosePlotPopup();
+                CloseSeedSheet();
+                _hud.Render();
+            };
+            _farm.onGroundTapped = () => { ClosePlotPopup(); CloseSeedSheet(); };
 
             var watcher = _root.gameObject.AddComponent<ResizeWatcher>();
             watcher.onResize = FitFarm;
@@ -95,20 +119,52 @@ namespace LQFarm
                 StartCoroutine(FirstHint());
         }
 
-        /// <summary>Scales the field to whatever room is left between the HUD rails and the
-        /// action bar, so the farm fills a 20:9 phone and a 4:3 tablet equally well.</summary>
+        RectTransform _pxFar, _pxNear, _pxClouds;
+        WeatherFx.Scene _scene;
+        WeatherFx _weather;
+        public WeatherFx WeatherView => _weather;
+        Weather _shownWeather = (Weather)255;
+        float _pxFarBase, _pxNearBase;
+
+        /// <summary>Slide the distant layers against the camera, so the world reads as somewhere
+        /// the player moves through rather than islands sliding over a painted picture.
+        ///
+        /// Only the hills and the clouds move. The sky is a flat gradient with no features, so
+        /// moving it would achieve nothing, and the SEA must not move at all — its horizon is the
+        /// waterline every island is drawn to sit in, and the moment that drifts the islands stop
+        /// looking like they are floating in it.
+        ///
+        /// Both offsets are clamped to the margin each layer was built with. An unclamped
+        /// parallax over a 6500-unit archipelago would drag a hill's own edge into frame, which
+        /// looks far worse than no parallax at all.</summary>
+        void LateUpdate()
+        {
+            if (_farm == null || _farm.Camera == null) return;
+            float camX = _farm.Camera.Camera.x;
+
+            if (_pxFar != null)  Shift(_pxFar, ref _pxFarBase, -camX * 0.030f, 210f);
+            if (_pxNear != null) Shift(_pxNear, ref _pxNearBase, -camX * 0.055f, 130f);
+            if (_pxClouds != null) _pxClouds.anchoredPosition = new Vector2(Mathf.Clamp(-camX * 0.085f, -170f, 170f), 0f);
+        }
+
+        static void Shift(RectTransform rt, ref float applied, float want, float limit)
+        {
+            float next = Mathf.Clamp(want, -limit, limit);
+            float delta = next - applied;
+            if (Mathf.Abs(delta) < 0.01f) return;
+            rt.offsetMin += new Vector2(delta, 0f);
+            rt.offsetMax += new Vector2(delta, 0f);
+            applied = next;
+        }
+
+        /// <summary>Re-fit the world to the current canvas.
+        ///
+        /// The fitting formula itself now lives in <see cref="MapCamera.Recompute"/> — it became
+        /// the base zoom level rather than a one-off scale assignment, because the field is no
+        /// longer a thing with one fixed size but a world the player can move around in.</summary>
         void FitFarm()
         {
-            if (_farm == null || _farm.Field == null) return;
-
-            Vector2 canvas = _root.rect.size;
-            if (canvas.x <= 0f || canvas.y <= 0f) return;
-
-            // Fit the GRID, not the island: the island is meant to bleed under the HUD bars
-            // like a backdrop. Grid half-extents are 489.4 x 255.7 at the current spacing.
-            const float FieldW = 979f, FieldH = 504f;
-            float room = Mathf.Min((canvas.x - 210f) / FieldW, (canvas.y - 190f) / FieldH);
-            _farm.Field.localScale = Vector3.one * Mathf.Clamp(room, 0.55f, 1.5f);
+            if (_farm != null) _farm.Refit();
         }
 
         IEnumerator FirstHint()
@@ -174,7 +230,10 @@ namespace LQFarm
         void BuildBackground(RectTransform bg)
         {
             // ---- sky ----
+            _scene.clouds = new List<Image>();
+            _scene.swell = new List<Image>();
             var sky = UIKit.Img(bg, Theme.Sky(), Color.white, "sky");
+            _scene.sky = sky;
             sky.type = Image.Type.Sliced;
             sky.rectTransform.Stretch();
 
@@ -184,6 +243,7 @@ namespace LQFarm
             var sun = UIKit.Img(bg, Art.Load("Art/bg/sun"), new Color(1f, 0.97f, 0.80f, 0.95f), "sun");
             sun.preserveAspect = true;
             sun.rectTransform.Anchor(UIKit.TopRight, new Vector2(-190, -70), new Vector2(120, 120));
+            _scene.sun = sun; _scene.sunGlow = glow;
 
             // ---- distant hills ----
             // The source art is a solid block whose top third carries the wavy crest, so the
@@ -194,19 +254,23 @@ namespace LQFarm
             farHills.rectTransform.anchorMin = new Vector2(0, 0);
             farHills.rectTransform.anchorMax = new Vector2(1, 0);
             farHills.rectTransform.pivot = new Vector2(0.5f, 0);
-            farHills.rectTransform.offsetMin = new Vector2(-70, Horizon - 200);
-            farHills.rectTransform.offsetMax = new Vector2(70, Horizon + 58);
+            // the horizontal margin is travel for the parallax; without it a shifted hill
+            // would pull its own edge into frame
+            farHills.rectTransform.offsetMin = new Vector2(-240, Horizon - 200);
+            farHills.rectTransform.offsetMax = new Vector2(240, Horizon + 58);
 
             var nearHills = UIKit.Img(bg, Art.Load("Art/bg/hills"), Theme.Hex("#5E97BE"), "hillsNear");
             nearHills.rectTransform.anchorMin = new Vector2(0, 0);
             nearHills.rectTransform.anchorMax = new Vector2(1, 0);
             nearHills.rectTransform.pivot = new Vector2(0.5f, 0);
-            nearHills.rectTransform.offsetMin = new Vector2(-30, Horizon - 200);
-            nearHills.rectTransform.offsetMax = new Vector2(30, Horizon + 30);
+            nearHills.rectTransform.offsetMin = new Vector2(-160, Horizon - 200);
+            nearHills.rectTransform.offsetMax = new Vector2(160, Horizon + 30);
+            _scene.farHills = farHills; _scene.nearHills = nearHills;
 
             // ---- clouds, three depths drifting at their own pace ----
             var clouds = UIKit.Node("clouds", bg);
             clouds.Stretch();
+            _pxFar = farHills.rectTransform; _pxNear = nearHills.rectTransform; _pxClouds = clouds;
             var specs = new (int sprite, float y, float w, float alpha, float speed)[]
             {
                 // kept below the HUD band — clouds were drifting across the player card
@@ -221,6 +285,7 @@ namespace LQFarm
                 im.preserveAspect = true;
                 float h = c.w * 0.62f;
                 im.rectTransform.Anchor(UIKit.TopLeft, new Vector2(0, c.y), new Vector2(c.w, h));
+                _scene.clouds.Add(im);
                 var d = im.gameObject.AddComponent<Drifter>();
                 d.speed = c.speed;
                 d.startX = -c.w - i * 190f;
@@ -234,6 +299,7 @@ namespace LQFarm
             water.rectTransform.pivot = new Vector2(0.5f, 0);
             water.rectTransform.offsetMin = new Vector2(-40, -60);
             water.rectTransform.offsetMax = new Vector2(40, Horizon);
+            _scene.water = water;
 
             // ---- swell ----
             float[] bands = { 0.30f, 0.62f, 0.86f };
@@ -253,6 +319,7 @@ namespace LQFarm
             // ---- vignette, last so it sits over the whole scene ----
             var vig = UIKit.Img(bg, Theme.Vignette(), Color.white, "vignette");
             vig.rectTransform.Stretch(-80, -80, -80, -80);
+            _scene.vignette = vig;
         }
 
         /// <summary>Petals drifting across the scene. Cheap, and the farm feels alive.</summary>
@@ -260,6 +327,7 @@ namespace LQFarm
         {
             var layer = UIKit.Node("petals", parent);
             layer.Stretch();
+            _scene.petals = layer;
             var tints = new[]
             {
                 new Color(1f, 0.92f, 0.96f, 0.75f), new Color(1f, 0.98f, 0.84f, 0.70f),
@@ -286,19 +354,24 @@ namespace LQFarm
         {
             float now = Time.unscaledTime;
 
-            // Ready badges bob themselves (see Bobber); the loop here only has to advance
+            // Badges and plants are animated by FieldAnimator; the loop here only has to advance
             // the countdowns, once a second. It used to re-render every ready plot and
             // allocate a fresh list every frame.
             if (now >= _nextTick)
             {
                 _nextTick = now + 1f;
+                // the hour turned: the map re-dresses itself (a no-op when nothing changed)
+                _weather.SetWeather(WeatherSys.Now(GS.Local));
                 if (_tickingDirty) { _ticking = _farm.TickingPlots(); _tickingDirty = false; }
 
                 bool finished = false;
                 foreach (int i in _ticking)
                 {
                     _farm.RenderPlot(i);
-                    if (FarmView.PlotState(GS.Viewing.plots[i]) != "growing") finished = true;
+                    // _farm.Plots, not GS.Viewing.plots: the ticking list comes from the island
+                    // being LOOKED AT, and reading its state out of island zero meant every
+                    // countdown on islands two through six was compared against the home farm.
+                    if (PlotLogic.State(_farm.Plots[i]) == PlotState.Ready) finished = true;
                 }
                 if (finished) _tickingDirty = true;
 
@@ -327,13 +400,22 @@ namespace LQFarm
 #endif
         }
 
+        /// <summary>Resuming redraws the field: crops kept growing on the wall clock while the
+        /// app was away, so every timer and badge on screen is stale.
+        ///
+        /// The null guard is not defensive padding. Setting <c>Application.runInBackground</c>
+        /// raises this callback SYNCHRONOUSLY, and that assignment happens in <see cref="Awake"/>
+        /// before the world is built — so on the first launch of an Editor session this fired
+        /// with <c>_farm</c> still null and threw. Unity swallows the exception, which is why it
+        /// sat in the log looking harmless.</summary>
         void OnApplicationPause(bool paused)
         {
+            if (_farm == null) return;
             if (paused) GS.Save();
             else { _tickingDirty = true; _farm.RenderAll(); }
         }
 
-        void OnApplicationQuit() { GS.Save(); }
+        void OnApplicationQuit() { if (_farm != null) GS.Save(); }
 
         void MarkDirty() { _tickingDirty = true; }
 
@@ -342,6 +424,8 @@ namespace LQFarm
         // ============================================================
         public void Open(PanelBase panel)
         {
+            _hud?.HideTray();
+            CloseSeedSheet();
             CloseAll();
             ClosePlotPopup();
             _panel = panel;
@@ -426,6 +510,22 @@ namespace LQFarm
 
         public void RefreshPanel() { _panel?.Refresh(); }
 
+        /// <summary>Build views for any island the player has gained. Called after an unlock.</summary>
+        public void SyncIslands() { _farm?.Sync(); }
+
+        /// <summary>Move the camera to an island.</summary>
+        public void GoToIsland(int index) { _farm?.GoToIsland(index); }
+
+        /// <summary>Redraw everything from current state. Exists for editor tooling that pokes
+        /// state directly — see the Dev menu items — and for nothing in the game itself.</summary>
+        public void ForceRedraw()
+        {
+            _farm.RenderAll();
+            MarkDirty();
+            _hud.Render();
+            RefreshPanel();
+        }
+
         // ============================================================
         // plot popup
         // ============================================================
@@ -439,10 +539,15 @@ namespace LQFarm
         public void OpenPlot(int i)
         {
             if (_panel != null) return;
-            var p = GS.Viewing.plots[i];
-            string st = FarmView.PlotState(p);
+            var p = _farm.Plots[i];
+            PlotState st = PlotLogic.State(p);
 
-            if (st == "ready") { ClosePlotPopup(); DoHarvest(i); return; }
+            if (st == PlotState.Ready) { ClosePlotPopup(); DoHarvest(i); return; }
+
+            // An empty bed opens (or re-targets) the seed sheet instead of a popup.
+            if (st == PlotState.Empty) { OpenSeedSheet(i); return; }
+            CloseSeedSheet();
+
             if (_popIndex == i) { ClosePlotPopup(); return; }
 
             ClosePlotPopup();
@@ -451,8 +556,8 @@ namespace LQFarm
             var pop = UIKit.Node("plotPop", _popupLayer);
             _plotPop = pop;
 
-            float w = st == "empty" ? 420f : 340f;
-            float h = st == "empty" ? 232f : 172f;
+            float w = 340f;
+            float h = 172f;
             pop.sizeDelta = new Vector2(w, h);
 
             var shadow = UIKit.Img(pop, Theme.Shadow(20, 20), new Color(0, 0, 0, 0.32f), "shadow");
@@ -462,9 +567,8 @@ namespace LQFarm
             bg.rectTransform.Stretch();
             bg.raycastTarget = true;
 
-            if (st == "locked") BuildLockedPop(pop, i);
-            else if (st == "growing") BuildGrowingPop(pop, i, p);
-            else BuildPlantPop(pop, i);
+            if (st == PlotState.Locked) BuildLockedPop(pop, i);
+            else BuildGrowingPop(pop, i, p);
 
             // anchor above the plot, clamped to the screen
             Vector3 world = _farm.WorldOfPlot(i);
@@ -491,125 +595,89 @@ namespace LQFarm
             s.rectTransform.offsetMin = new Vector2(14, -70); s.rectTransform.offsetMax = new Vector2(-14, -44);
         }
 
+        /// <summary>The locked-plot popup is where the plot ladder is taught.
+        ///
+        /// It quotes the price the ladder is CURRENTLY at rather than a price attached to this
+        /// tile, because that is what the player will actually pay — see <c>IslandSys.PlotLevel</c>
+        /// for why the ladder is indexed by how many plots are open instead of by which one was
+        /// tapped. When the level gate has not been met the price is not shown at all: a number
+        /// the player cannot act on reads as a second obstacle rather than a goal.</summary>
         void BuildLockedPop(RectTransform pop, int i)
         {
-            PopTitle(pop, "Ô đất bị khoá", "Mở rộng trang trại để canh tác thêm");
+            int island = _farm != null ? _farm.CurrentIsland : 0;
+            var isl = GS.Local.EnsureIsland(island);
+            int open = IslandSys.OpenCount(isl);
+            int price = IslandSys.PlotPrice(island, open);
+            int needLv = IslandSys.PlotLevel(island, open);
+            bool levelOk = GS.Local.lv >= needLv;
+            bool coinOk = GS.Local.coin >= price;
+
+            if (!levelOk)
+            {
+                PopTitle(pop, "Ô đất bị khoá", "Mở bán ở cấp " + needLv + " · bạn đang cấp " + GS.Local.lv);
+
+                var only = UIKit.Btn(pop, "Nâng cấp", Theme.Blue, Theme.BlueDeep, 21, 20,
+                                     () => { ClosePlotPopup(); Open(new UpgradePanel(this)); });
+                only.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(0, 18), new Vector2(190, 52));
+                return;
+            }
+
+            PopTitle(pop, "Mở ô đất",
+                     "Ô thứ " + (open + 1) + "/" + IslandSys.PlotsPerIsland + " · " + IslandSys.NameOf(island));
 
             var a = UIKit.Btn(pop, "Nâng cấp", Theme.Blue, Theme.BlueDeep, 21, 20,
                               () => { ClosePlotPopup(); Open(new UpgradePanel(this)); });
             a.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(-82, 18), new Vector2(150, 52));
 
-            var b = UIKit.Btn(pop, "Mở · " + Fmt.N(12000), Theme.Amber, Theme.AmberDeep, 21, 20,
+            var b = UIKit.Btn(pop, "Mở · " + Fmt.N(price),
+                              coinOk ? Theme.Amber : Theme.Cream3,
+                              coinOk ? Theme.AmberDeep : Theme.Hex("#B9A98C"), 21, 20,
                               () => BuyPlot(i));
             b.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(82, 18), new Vector2(150, 52));
+            if (!coinOk)
+            {
+                UIKit.BtnLabel(b).color = Theme.InkSoft;
+                b.interactable = false;
+            }
         }
 
         void BuildGrowingPop(RectTransform pop, int i, Plot p)
         {
             var seed = GameData.Get(p.crop);
-            string name = seed.name + (p.variant > 0 ? "  \u2022 " + Art.Elem(p.variant).name : "");
-            PopTitle(pop, name, "Còn " + Fmt.Time(FarmView.Remain(p)) +
-                                "  ·  giai đoạn " + (FarmView.StageOf(p) + 1) + "/4");
+            var el = Art.Elem(p.variant);
+            // The tier was rolled at plant and the plot has been glowing since stage one, so the
+            // popup confirms rather than reveals. It also promises the fruit count, which is the
+            // part the glow cannot say.
+            string name = seed.name + (p.variant > 0 ? "  \u2022 " + el.name : "");
+            int fruits = GS.Viewing.YieldOf(seed, p.variant);
+            // The subtitle is where the watering rhythm is taught. A player who never opens this
+            // popup can still learn it from the pulsing ring, but the numbers only live here.
+            bool open = WaterSys.WindowOpen(p, out _);
+            int left = WaterSys.Remaining(p);
+            string hint;
+            if (open)          hint = "tưới được ngay, giảm " + WaterSys.CutPercent(p) + "%";
+            else if (left > 0) hint = "lượt tưới sau " + Fmt.Time(Mathf.CeilToInt(WaterSys.NextWindowIn(p)))
+                                      + " · còn " + left + " lượt";
+            else               hint = "hết lượt tưới";
 
-            var water = UIKit.Btn(pop, p.watered ? "Đã tưới" : "Tưới nước",
-                                  p.watered ? Theme.Cream3 : Theme.Blue,
-                                  p.watered ? Theme.Hex("#B9A98C") : Theme.BlueDeep, 21, 20,
+            string yieldNote = fruits + " quả";
+            if (p.variant > 0) yieldNote = el.Grade + " · " + yieldNote;
+            PopTitle(pop, name, "Còn " + Fmt.Time(PlotLogic.Remain(p)) + "  ·  " + yieldNote + "  ·  " + hint);
+
+            var water = UIKit.Btn(pop, open ? "Tưới nước" : "Chưa tới cữ",
+                                  open ? Theme.Blue : Theme.Cream3,
+                                  open ? Theme.BlueDeep : Theme.Hex("#B9A98C"), 21, 20,
                                   () => DoWater(i));
             water.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(-82, 18), new Vector2(150, 52));
-            if (p.watered) UIKit.BtnLabel(water).color = Theme.InkSoft;
+            if (!open)
+            {
+                UIKit.BtnLabel(water).color = Theme.InkSoft;
+                water.interactable = false;
+            }
 
             var speed = UIKit.Btn(pop, "Chín ngay · 800", Theme.Amber, Theme.AmberDeep, 19, 20,
                                   () => SpeedUp(i));
             speed.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(82, 18), new Vector2(150, 52));
-        }
-
-        void BuildPlantPop(RectTransform pop, int i)
-        {
-            var owned = GS.Local.seeds.Where(kv => kv.Value > 0).ToList();
-            if (owned.Count == 0)
-            {
-                PopTitle(pop, "Chưa có hạt giống", "Ghé cửa hàng để mua thêm");
-                var b = UIKit.Btn(pop, "Mua hạt giống", Theme.Green, Theme.GreenDark, 21, 20,
-                                  () => { ClosePlotPopup(); Open(new SeedShopPanel(this)); });
-                b.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(0, 18), new Vector2(240, 52));
-                return;
-            }
-
-            PopTitle(pop, "Chọn hạt giống", "Chạm để gieo trồng");
-
-            var strip = UIKit.Node("seeds", pop);
-            strip.anchorMin = new Vector2(0, 1); strip.anchorMax = new Vector2(1, 1);
-            strip.pivot = new Vector2(0.5f, 1);
-            strip.offsetMin = new Vector2(14, -184); strip.offsetMax = new Vector2(-14, -74);
-
-            var scroll = strip.gameObject.AddComponent<ScrollRect>();
-            strip.gameObject.AddComponent<RectMask2D>();
-            var content = UIKit.Node("content", strip);
-            content.anchorMin = new Vector2(0, 0); content.anchorMax = new Vector2(0, 1);
-            content.pivot = new Vector2(0, 0.5f);
-            content.anchoredPosition = Vector2.zero;
-            var grid = content.gameObject.AddComponent<GridLayoutGroup>();
-            grid.cellSize = new Vector2(86, 96);
-            grid.spacing = new Vector2(8, 8);
-            grid.startAxis = GridLayoutGroup.Axis.Vertical;
-            grid.constraint = GridLayoutGroup.Constraint.FixedRowCount;
-            grid.constraintCount = 1;
-            var fit = content.gameObject.AddComponent<ContentSizeFitter>();
-            fit.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
-            scroll.content = content;
-            scroll.viewport = strip;
-            scroll.horizontal = true;
-            scroll.vertical = false;
-            scroll.movementType = ScrollRect.MovementType.Elastic;
-
-            foreach (var kv in owned.OrderBy(k => GameData.Get(k.Key)?.lv ?? 0))
-            {
-                var s = GameData.Get(kv.Key);
-                if (s == null) continue;
-                string id = s.id;
-                var cell = UIKit.Node("seed", content);
-                var face = UIKit.Round(cell, Theme.Cream2, 14, "face");
-                face.rectTransform.Stretch();
-                face.raycastTarget = true;
-                var frame = UIKit.Img(cell, Theme.Round(14), Theme.Rarity[s.r], "frame");
-                frame.type = Image.Type.Sliced;
-                frame.rectTransform.Stretch(-2, -2, -2, -2);
-                frame.transform.SetAsFirstSibling();
-
-                var art = UIKit.Node("art", cell);
-                art.Stretch(8, 6, 8, 24);
-                var im = UIKit.Img(art, Art.Icon(s.art, 0), Color.white, "im");
-                im.preserveAspect = true;
-                im.rectTransform.Stretch();
-
-                var n = UIKit.Node("n", cell);
-                n.Anchor(UIKit.Bottom, new Vector2(0, 6), new Vector2(72, 20));
-                UIKit.Label(n, s.name + " ×" + kv.Value, 13, Theme.InkSoft, TextAnchor.MiddleCenter)
-                     .rectTransform.Stretch();
-
-                var b = cell.gameObject.AddComponent<Button>();
-                b.targetGraphic = face;
-                b.onClick.AddListener(() => DoPlant(i, id));
-                cell.gameObject.AddComponent<PressFx>();
-            }
-
-            var shop = UIKit.Btn(pop, "Cửa hàng", Theme.Cream3, Theme.Hex("#B9A98C"), 19, 20,
-                                 () => { ClosePlotPopup(); Open(new SeedShopPanel(this)); });
-            shop.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(-98, 14), new Vector2(180, 48));
-            UIKit.BtnLabel(shop).color = Theme.Ink;
-
-            var all = UIKit.Btn(pop, "Gieo tất cả", Theme.Green, Theme.GreenDark, 19, 20,
-                                () => { ClosePlotPopup(); PlantAll(); });
-            all.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(98, 14), new Vector2(180, 48));
-        }
-
-        // ============================================================
-        // actions
-        // ============================================================
-        void DoPlant(int i, string seedId)
-        {
-            if (_farm.Plant(i, seedId)) { MarkDirty(); _hud.Render(); GS.Save(); }
-            ClosePlotPopup();
         }
 
         void DoWater(int i)
@@ -630,55 +698,295 @@ namespace LQFarm
 
         void BuyPlot(int i)
         {
-            if (GS.Local.coin < 12000) { Toast("Không đủ xu nông trại"); return; }
-            if (GS.Local.UnlockExtraPlot(i))
+            int island = _farm != null ? _farm.CurrentIsland : 0;
+            if (!GS.Local.PlotBuyable(island, out int price, out int needLv))
             {
-                GS.Local.AddCoin(-12000);
-                _farm.RenderAll(); MarkDirty(); _hud.Render(); GS.Save();
-                Toast("Đã mở khoá ô đất này!");
+                Toast(GS.Local.lv < needLv ? "Mở bán ở cấp " + needLv : "Không đủ xu nông trại");
+                return;
             }
+            if (!GS.Local.BuyPlot(island, i)) { ClosePlotPopup(); return; }
+
+            _farm.RenderAll(); MarkDirty(); _hud.Render(); GS.Save();
+            Toast("Đã mở ô đất · " + Fmt.N(price) + " xu");
             ClosePlotPopup();
         }
 
+        /// <summary>Feedback for one harvest, weighted by how rare the result was.
+        ///
+        /// Escalation is a parameter table, not new code — every effect used here already
+        /// existed. The rule that matters is the last row: a modal is reserved for the top tier
+        /// alone. Anything more generous and a player harvesting sixteen plots is interrupted
+        /// sixteen times, which turns the reward into an obstacle.</summary>
         void DoHarvest(int i)
         {
             if (!_farm.Harvest(i, out var res)) return;
             MarkDirty(); _hud.Render(); GS.Save();
-            if (res.variant > 0)
+            ShowMutation(res, modalAllowed: true);
+        }
+
+        void ShowMutation(IslandView.HarvestResult res, bool modalAllowed)
+        {
+            if (res.variant <= 0) return;
+            var el = Art.Elem(res.variant);
+            int top = Art.Elements.Length - 1;
+
+            switch (res.variant)
             {
-                Toast("Đột biến! " + res.seed.name + " " + Art.Elem(res.variant).name);
-                Tween.Shake(_root, 5f);
+                case 1:  break;                                        // Ngọc Bích: the glow says it
+                case 2:  Toast(el.name + "! " + res.seed.name); break;
+                case 3:
+                    Toast(el.Grade + " · " + el.name + "! " + res.seed.name);
+                    Tween.Shake(_root, 5f);
+                    break;
+                default:
+                    Tween.Shake(_root, 9f);
+                    if (res.variant == top && modalAllowed)
+                        ShowReward(el.name.ToUpper() + "!", new List<RewardItem>
+                        {
+                            new RewardItem(Art.Icon(res.seed.art, res.variant),
+                                           res.seed.name + " " + el.name, el.glow),
+                            new RewardItem(CoinIconSprite, "×" + Fmt.N(Mathf.RoundToInt(el.sell)) + " giá trị", Theme.Amber),
+                            new RewardItem(Theme.Skin.NavSeeds, res.fruits + " quả", Theme.GreenDeep),
+                        });
+                    else Toast(el.Grade + " · " + el.name + "! " + res.seed.name);
+                    break;
             }
         }
 
+        static Sprite CoinIconSprite => Theme.Skin.Coin;
+
+        /// <summary>Sweep-harvest, and the summary that replaces sixteen separate receipts.
+        ///
+        /// Per-plot popups are suppressed entirely here. One line saying what, how much and why
+        /// is both honest and readable; sixteen of them in a row is neither. A legendary found
+        /// during the sweep is QUEUED rather than allowed to interrupt — the arcs finish, the
+        /// summary lands, and only then does it get its moment.</summary>
         public void HarvestAll()
         {
-            int n = 0;
+            int n = 0, fruits = 0, coins = 0, mutations = 0;
+            var best = default(IslandView.HarvestResult);
+
             foreach (int i in _farm.ReadyPlots())
-                if (_farm.Harvest(i, out _)) n++;
+            {
+                if (!_farm.Harvest(i, out var res)) continue;
+                n++;
+                fruits += res.fruits;
+                coins += res.bonusCoins;
+                if (res.variant > 0) mutations++;
+                if (res.variant > best.variant) best = res;
+            }
 
             if (n == 0) { Toast("Chưa có cây nào chín"); return; }
             MarkDirty(); _hud.Render(); GS.Save();
             Tween.Shake(_root, 4f);
-            Toast("Đã thu hoạch " + n + " cây trồng");
+
+            // what · how much · why
+            string line = "Thu hoạch " + n + " cây · " + fruits + " quả";
+            if (coins > 0) line += "  +" + Fmt.N(coins);
+            // No emoji: legacy Text renders from the OS font and has no colour-glyph path, so
+            // on Android "✨" is a tofu box in the middle of the one line that celebrates luck.
+            if (mutations > 0) line += "  ·  " + mutations + " đột biến";
+            Toast(line);
+
+            if (best.variant == Art.Elements.Length - 1) StartCoroutine(QueuedMutation(best));
         }
 
+        IEnumerator QueuedMutation(IslandView.HarvestResult res)
+        {
+            yield return new WaitForSecondsRealtime(1.1f);
+            ShowMutation(res, modalAllowed: true);
+        }
+
+        // ============================================================
+        // seed sheet
+        // ============================================================
+        SeedSheet _sheet;
+        int _sheetPlot = -1;     // -1 while open means "Gieo nhanh": plant every empty bed
+
+        /// <summary>Open the sheet on one empty bed, or (plot = -1) for planting them all.</summary>
+        public void OpenSeedSheet(int plot)
+        {
+            ClosePlotPopup();
+            _hud.HideTray();
+            if (_sheet == null) { _sheet = new SeedSheet(); _sheet.Build(_popupLayer, this); }
+
+            _sheetPlot = plot;
+            string isle = IslandSys.NameOf(_farm.CurrentIsland);
+            int empty = _farm.EmptyPlots().Count;
+            if (plot >= 0)
+            {
+                _sheet.Show("Chọn hạt giống", "Gieo vào ô đang sáng · " + isle + " · còn " + empty + " ô trống");
+                _farm.SetSelectedPlot(plot);
+                _farm.Camera.SetInsetBottom(SeedSheet.Height, _farm.ContentOfPlot(plot));
+            }
+            else
+            {
+                _sheet.Show("Gieo nhanh", "Chọn một loại hạt để gieo kín " + empty + " ô trống · " + isle);
+                _farm.SetSelectedPlot(-1);
+                _farm.Camera.SetInsetBottom(SeedSheet.Height);
+            }
+            _hud.SetActionBarVisible(false);
+        }
+
+        public void CloseSeedSheet()
+        {
+            if (_sheet == null || !_sheet.IsOpen) return;
+            _sheet.Hide();
+            _sheetPlot = -1;
+            _farm.SetSelectedPlot(-1);
+            _farm.Camera.SetInsetBottom(0f);
+            _hud.SetActionBarVisible(true);
+            _hud.Render();
+        }
+
+        /// <summary>A seed card was tapped.</summary>
+        public void PickSeed(string seedId)
+        {
+            if (_sheet == null || !_sheet.IsOpen) return;
+            if (_sheetPlot < 0) { PlantEveryEmpty(seedId); CloseSeedSheet(); return; }
+
+            if (!TakeOrBuySeed(seedId)) return;
+            if (!_farm.Plant(_sheetPlot, seedId)) return;
+            MarkDirty(); _hud.Render(); GS.Save();
+
+            // Move straight on to the nearest empty bed; slide away when the island is full.
+            int next = NearestEmpty(_sheetPlot);
+            if (next < 0) { CloseSeedSheet(); Toast("Đã gieo kín đảo này"); return; }
+            _sheetPlot = next;
+            _farm.SetSelectedPlot(next);
+            _farm.Camera.SetInsetBottom(SeedSheet.Height, _farm.ContentOfPlot(next));
+            _sheet.SetSubtitle("Gieo vào ô đang sáng · " + IslandSys.NameOf(_farm.CurrentIsland)
+                               + " · còn " + _farm.EmptyPlots().Count + " ô trống");
+            _sheet.Rebuild();
+        }
+
+        /// <summary>Use a seed from the bag, or buy exactly one. Tapping a seed you do not own is
+        /// a purchase — making the player detour through the shop for a 224-coin packet while a
+        /// bed sits selected was the friction the sheet exists to remove.</summary>
+        bool TakeOrBuySeed(string seedId)
+        {
+            if (GS.Local.seeds.TryGetValue(seedId, out int have) && have > 0) return true;
+            var seed = GameData.Get(seedId);
+            if (seed == null || seed.lv > GS.Local.lv) return false;
+            if (GS.Local.coin < seed.price) { Toast("Không đủ xu mua " + seed.name); return false; }
+            GS.Local.AddCoin(-seed.price);
+            GS.Local.AddSeed(seedId, 1);
+            return true;
+        }
+
+        /// <summary>The empty bed closest to the one just planted, by grid steps — so the
+        /// selection walks along the row the player is filling instead of jumping around.</summary>
+        int NearestEmpty(int from)
+        {
+            int best = -1, bestD = int.MaxValue;
+            int fr = from / 4, fc = from % 4;
+            foreach (int i in _farm.EmptyPlots())
+            {
+                int d = Mathf.Abs(i / 4 - fr) + Mathf.Abs(i % 4 - fc);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            return best;
+        }
+
+        void PlantEveryEmpty(string seedId)
+        {
+            var seed = GameData.Get(seedId);
+            int greenBefore = GS.Local.greenhouse;
+            int n = 0;
+            foreach (int i in _farm.EmptyPlots())
+            {
+                if (!TakeOrBuySeed(seedId)) break;
+                if (_farm.Plant(i, seedId)) n++; else break;
+            }
+            if (n == 0) return;
+            MarkDirty(); _hud.Render(); GS.Save();
+
+            int sheltered = greenBefore - GS.Local.greenhouse;
+            string line = "Đã gieo " + n + " " + (seed != null ? seed.name : "hạt");
+            if (sheltered > 0)
+                line += "  ·  nhà kính che " + sheltered + (GS.Local.greenhouse > 0 ? " (còn " + GS.Local.greenhouse + ")" : " (hết)");
+            Toast(line);
+        }
+
+        /// <summary>"Gieo" on the bottom bar: the seed sheet in plant-everything mode.</summary>
         public void PlantAll()
         {
+            if (_farm.EmptyPlots().Count == 0) { Toast("Không còn ô trống"); return; }
+            OpenSeedSheet(-1);
+        }
+
+        /// <summary>Kept for the dev tools and tests: plant every empty bed with whatever is in
+        /// the bag, no sheet.</summary>
+        public void PlantAllFromBag()
+        {
+            // Greenhouse charges are spent inside Plant, one per sheltered planting. A bulk sweep
+            // in a storm can burn all six in a single tap, so the count is measured here and said
+            // out loud — a consumable that vanishes without a word is the same as a bug.
+            int greenBefore = GS.Local.greenhouse;
+
             int n = 0;
-            for (int i = 0; i < GS.PlotCount; i++)
+            foreach (int i in _farm.EmptyPlots())
             {
-                if (FarmView.PlotState(GS.Viewing.plots[i]) != "empty") continue;
                 var id = GS.Local.seeds.FirstOrDefault(k => k.Value > 0).Key;
                 if (string.IsNullOrEmpty(id)) break;
                 if (_farm.Plant(i, id)) n++;
             }
-            if (n > 0)
+            if (n == 0) { Toast("Không còn hạt giống hoặc ô trống"); return; }
+
+            MarkDirty(); _hud.Render(); GS.Save();
+
+            int sheltered = greenBefore - GS.Local.greenhouse;
+            string line = "Đã gieo " + n + " hạt giống";
+            if (sheltered > 0)
+                line += "  ·  nhà kính che " + sheltered
+                      + (GS.Local.greenhouse > 0 ? " (còn " + GS.Local.greenhouse + ")" : " (hết)");
+            Toast(line);
+        }
+
+        /// <summary>Water every plot whose window is open.
+        ///
+        /// This is the verb the design was missing. Watering cuts 20% off a crop's time and the
+        /// windows are short, so doing it plot by plot across sixteen tiles was work the reward
+        /// never justified — which meant the system was, in practice, off. One button makes the
+        /// whole timed-window design worth having.</summary>
+        public void WaterAll()
+        {
+            var list = _farm.WaterablePlots();
+            if (list.Count == 0) { Toast("Chưa tới cữ tưới"); return; }
+
+            int n = 0;
+            float saved = 0f;
+            foreach (int i in list)
             {
-                MarkDirty(); _hud.Render(); GS.Save();
-                Toast("Đã gieo " + n + " hạt giống");
+                var p = _farm.Plots[i];
+                float before = p.cut;
+                if (!_farm.Water(i)) continue;
+                n++; saved += p.cut - before;
             }
-            else Toast("Không còn hạt giống hoặc ô trống");
+            if (n == 0) { Toast("Chưa tới cữ tưới"); return; }
+
+            MarkDirty(); _hud.Render(); GS.Save();
+            Toast("Đã tưới " + n + " cây · sớm hơn " + Fmt.Time(Mathf.RoundToInt(saved)));
+        }
+
+        /// <summary>Move one island along the row, skipping nothing: a locked island is still
+        /// somewhere to go, because the tribute board painted on it is the goal the player is
+        /// working toward.</summary>
+        public void StepIsland(int delta)
+        {
+            int max = Mathf.Min(IslandSys.Max, _farm.IslandCount) - 1;
+            int want = Mathf.Clamp(_farm.CurrentIsland + delta, 0, max);
+            if (want == _farm.CurrentIsland) return;
+            GoToIsland(want);
+            _hud.Render();
+        }
+
+        /// <summary>Pull back far enough to see the whole archipelago at once.</summary>
+        public void ShowArchipelago()
+        {
+            if (_farm == null) return;
+            _farm.ShowAll();
+            _farm.ApplyLod();
         }
 
         public void DoUpgrade()
@@ -687,7 +995,6 @@ namespace LQFarm
             if (GS.Local.xp < a.xpNeed) { Toast("Chưa đủ kinh nghiệm — hãy thu hoạch thêm!"); return; }
             if (GS.Local.coin < a.cost) { Toast("Không đủ xu nông trại"); return; }
 
-            int before = GS.Local.MaxPlots;
             if (!GS.Local.LevelUp()) return;
 
             _farm.RenderAll(); MarkDirty(); _hud.Render(); RefreshPanel(); GS.Save();
@@ -696,7 +1003,17 @@ namespace LQFarm
             var items = new List<RewardItem> { new RewardItem(Theme.Skin.Farmhouse, "Trang trại cấp " + GS.Local.lv, Theme.GreenDeep) };
             var unlocked = GameData.Seeds.FirstOrDefault(s => s.lv == GS.Local.lv);
             if (unlocked != null) items.Add(new RewardItem(Art.Icon(unlocked.art, 0), unlocked.name));
-            if (GS.Local.MaxPlots > before) items.Add(new RewardItem(Art.TileEmpty, "+1 ô đất"));
+            // Levelling makes the next plot BUYABLE rather than free, so the reward card says
+            // that instead of promising a plot the player still has to pay for. Only on the level
+            // that actually crosses the gate: "≥ gate" announced it again on every level after.
+            if (GS.Local.PlotLevelNow(0) == GS.Local.lv && IslandSys.OpenCount(GS.Local.islands[0]) < IslandSys.PlotsPerIsland)
+                items.Add(new RewardItem(Art.TileEmpty, "Mở bán ô đất · " + Fmt.N(GS.Local.PlotPriceNow(0))));
+            string quick = QuickActions.UnlockedAt(GS.Local.lv);
+            if (quick != null)
+                items.Add(new RewardItem(Theme.Skin.StarGold, "Mở khoá " + quick, Theme.Amber));
+            int isle = IslandSys.NextLocked(GS.Local);
+            if (isle > 0 && IslandSys.Def(isle).lv == GS.Local.lv)
+                items.Add(new RewardItem(Theme.Skin.Farmhouse, "Đủ cấp mở " + IslandSys.NameOf(isle), Theme.Blue));
             ShowReward("Nâng cấp thành công!", items);
         }
 
@@ -777,6 +1094,60 @@ namespace LQFarm
             Toast("Đã mua " + qty + " gói " + s.name);
         }
 
+        /// <summary>Shared tail after any mission reward: bank it and refresh the chrome.</summary>
+        /// <summary>A tribute payment changes the warehouse, the sign on the island and the coin
+        /// count, and the player is looking at all three.</summary>
+        public void AfterTribute()
+        {
+            _farm?.RenderAll();
+            MarkDirty(); _hud.Render(); GS.Save();
+        }
+
+        /// <summary>An island opened. This is the largest single moment in the game's progression
+        /// — sixteen new plots and a farm-wide perk — so it gets the camera, not a toast.</summary>
+        public void OnIslandUnlocked(int index)
+        {
+            GS.Local.SyncPlots();
+            _farm?.RenderAll();
+            MarkDirty(); _hud.Render(); GS.Save();
+            StartCoroutine(BridgeCeremony(index));
+        }
+
+        /// <summary>The unlock moment: pull back so both islands are in frame, grow the cloud
+        /// bridge from the old island to the new one, then walk the camera across it. The reward
+        /// card waits until the player has actually arrived.</summary>
+        IEnumerator BridgeCeremony(int index)
+        {
+            var cam = _farm.Camera;
+            Vector2 a = ArchipelagoView.IslandOrigin(Mathf.Max(0, index - 1));
+            Vector2 b = ArchipelagoView.IslandOrigin(index);
+            float wide = cam.ZBase * 0.59f;
+            cam.FlyTo((a + b) * 0.5f, wide, 0.55f);
+            yield return new WaitForSecondsRealtime(0.6f);
+
+            _farm.SyncBridges(animateNew: true);
+            SyncIslands();
+            yield return new WaitForSecondsRealtime(ArchipelagoView.BridgeBuildSeconds);
+
+            GoToIsland(index);
+            yield return new WaitForSecondsRealtime(0.45f);
+            Tween.Shake(_root, 9f);
+
+            var def = IslandSys.Def(index);
+            ShowReward("Đã mở " + def.name + "!", new List<RewardItem>
+            {
+                new RewardItem(Theme.Skin.Farmhouse, def.freePlots + " ô đất sẵn sàng", Theme.GreenDeep),
+                new RewardItem(Theme.Skin.StarGold, def.perk, Theme.Amber),
+            });
+        }
+
+        public void AfterClaim()
+        {
+            MarkDirty();
+            _hud.Render();
+            GS.Save();
+        }
+
         public void ClaimTask(Task t, bool daily)
         {
             if (!GS.Local.ClaimTask(t, daily)) return;
@@ -818,8 +1189,9 @@ namespace LQFarm
         public void BuyShopItem(ShopItem it)
         {
             if (GS.Local.shopBought.Contains(it.id)) { Toast("Bạn đã mua vật phẩm này"); return; }
-            if (GS.Local.coin < it.price) { Toast("Không đủ xu nông trại"); return; }
-            GS.Local.AddCoin(-it.price);
+            int price = ShopSys.PriceOf(GS.Local, it);
+            if (GS.Local.coin < price) { Toast("Không đủ xu nông trại"); return; }
+            GS.Local.AddCoin(-price);
 
             var extra = new List<RewardItem>();
             switch (it.effect)
@@ -828,15 +1200,40 @@ namespace LQFarm
                     GS.Local.AddEnergy(300);
                     extra.Add(new RewardItem(Theme.Skin.NavMagic, "+300 năng lượng", Theme.Purple));
                     break;
-                case "plot":
-                    GS.Local.UnlockExtraPlot();
-                    _farm.RenderAll();
-                    extra.Add(new RewardItem(Art.TileEmpty, "+1 ô đất"));
-                    break;
                 case "mutate":
-                    GS.Local.buffMutateUntil = GS.Now + 300000;
-                    extra.Add(new RewardItem(Theme.Skin.StarGold, "+30% đột biến"));
+                    // 10 minutes, not 5. The buff is read at PLANT, so what it is worth is the
+                    // number of plantings it covers; five minutes covered barely one sweep.
+                    GS.Local.buffMutateUntil = GS.Now + 600_000L;
+                    extra.Add(new RewardItem(Theme.Skin.StarGold, "+30% đột biến · 10 phút"));
                     break;
+                case "forecast":
+                    GS.Local.forecastUntil = System.Math.Max(GS.Local.forecastUntil, GS.Now) + ShopSys.ForecastMs;
+                    extra.Add(new RewardItem(Art.WeatherIcon(WeatherSys.Next(GS.Local)),
+                                             "Xem trước 12 giờ", Theme.Blue));
+                    break;
+                case "green":
+                    GS.Local.greenhouse += ShopSys.GreenhouseCharges;
+                    extra.Add(new RewardItem(Theme.Skin.Farmhouse,
+                                             ShopSys.GreenhouseCharges + " lần gieo được che", Theme.GreenDeep));
+                    break;
+                case "reroll":
+                {
+                    // Rerolls the LEAST valuable contract on the board. Letting the player pick
+                    // would be a second panel for a decision with one obvious answer.
+                    int worst = -1; int worstPay = int.MaxValue;
+                    for (int k = 0; k < GS.Local.contracts.Count; k++)
+                    {
+                        var m = GS.Local.contracts[k];
+                        if (m.Empty || m.p >= m.need) continue;
+                        int pay = MissionSys.CoinReward(GS.Local, m);
+                        if (pay < worstPay) { worstPay = pay; worst = k; }
+                    }
+                    if (worst < 0) { Toast("Không có đơn nào để đổi"); GS.Local.AddCoin(price); return; }
+                    var fresh = MissionSys.Generate(GS.Local, worst, MissionSys.CycleOf(GS.Now) + 1);
+                    GS.Local.contracts[worst] = fresh;
+                    extra.Add(new RewardItem(Theme.Skin.NavQuest, MissionSys.Describe(fresh), Theme.Blue));
+                    break;
+                }
                 case "seedbag":
                 {
                     var pool = GameData.Seeds.Where(s => s.lv <= GS.Local.lv).ToList();
@@ -850,18 +1247,29 @@ namespace LQFarm
                 }
                 case "instant":
                 {
-                    int idx = -1;
-                    for (int k = 0; k < GS.PlotCount; k++)
-                        if (!string.IsNullOrEmpty(GS.Viewing.plots[k].crop) && FarmView.PlotState(GS.Viewing.plots[k]) != "ready") { idx = k; break; }
+                    // The plot with the LONGEST wait left, on the island being looked at — the
+                    // one the player would have chosen.
+                    int idx = -1; float worstLeft = 0f;
+                    var pls = _farm.Plots;
+                    for (int k = 0; k < GS.PlotCount && k < pls.Count; k++)
+                    {
+                        if (string.IsNullOrEmpty(pls[k].crop) || PlotLogic.State(pls[k]) == PlotState.Ready) continue;
+                        float left = PlotLogic.Remain(pls[k]);
+                        if (left > worstLeft) { worstLeft = left; idx = k; }
+                    }
                     if (idx >= 0) _farm.InstantGrow(idx);
                     extra.Add(new RewardItem(Theme.Skin.NavMagic, "Chín ngay", Theme.Purple));
                     break;
                 }
                 case "water3":
                 {
+                    // The watering system changed under this item: windows open and close on a
+                    // schedule now, so "tưới nhanh ×3" was three taps saved. Skipping the schedule
+                    // entirely on the whole island is what the item is actually worth buying for.
                     int n = 0;
-                    for (int k = 0; k < GS.PlotCount && n < 3; k++) if (_farm.Water(k)) n++;
-                    extra.Add(new RewardItem(Theme.Skin.Droplet, "Tưới ×" + n));
+                    for (int k = 0; k < GS.PlotCount; k++) if (_farm.ForceWater(k)) n++;
+                    _farm.RenderAll();
+                    extra.Add(new RewardItem(Theme.Skin.Droplet, "Tưới " + n + " cây"));
                     break;
                 }
                 default:

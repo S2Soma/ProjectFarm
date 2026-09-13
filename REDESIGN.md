@@ -353,7 +353,7 @@ Các con số đó là **tỉ lệ chứ không phải tuyệt đối** — kho�
 22s ở cấp cao) **không lượt nào**, và cà rốt chiếm phần lớn giai đoạn đầu.
 
 ```
-W (số lượt)   = 1 nếu dur < 60 giây, ngược lại 3
+W (số lượt)   = 1 nếu dur < 90 giây, ngược lại 3
 P (chu kỳ)    = dur / (W + 1)
 D (mở trong)  = max(8 giây, 0,15 · dur) × hệ số thời tiết
 C (giảm/lượt) = 0,20 · dur / W
@@ -362,6 +362,11 @@ Tổng giảm     = 0,20 · dur   ← luôn luôn 20%
 
 Ở `dur = 300`: lượt mở tại **75 / 150 / 225 giây**, mỗi lượt mở **45 giây**, mỗi lượt giảm
 **20 giây**, tổng giảm **60 giây**. Khớp chính xác ví dụ của bạn.
+
+**Ngưỡng 1 lượt đổi từ 60s lên 90s (sửa khi code).** Ở `dur = 60` với 3 lượt, người chơi tưới
+đủ 2 lượt đầu thì cây chín ở 52s trong khi lượt 3 mở ở 45s — chỉ còn **7 giây** dùng được. Dưới
+90s một lượt thoải mái đọc tốt hơn ba lượt chen chúc. Test tự động kiểm bất biến "lượt cuối phải
+kịp mở" trên 24 thời gian trồng.
 
 **Một điều chỉnh so với ví dụ.** Bạn nói chu kỳ 90s (= 0,30·dur). Ở đó lượt 3 mở tại 0,90·dur —
 nhưng người chơi đã tưới lượt 1 và 2 thì cây chín tại 0,867·dur, tức **trước khi lượt 3 kịp mở**.
@@ -683,17 +688,17 @@ Lộ trình dưới đây được xếp sao cho **game chạy được sau mỗ
 | # | Bước | Người chơi thấy? | Rủi ro |
 |---|---|---|---|
 | 0 | ✅ **XONG** — `PlayerState` + `FarmContext`. `GS` còn đúng 7 thành viên tĩnh. 159 call site đã chuyển. Có `ArchitectureGuard` cưỡng chế | Không | Thấp, diện rộng |
-| 1 | **Đổi serialiser** sang Newtonsoft, `v:2`. Save cũ xoá luôn (bạn đã đồng ý reset) | Không | Thấp |
-| 2 | **Model ô đất + tưới theo lượt.** Vẫn một đảo | **Có — tính năng đầu tiên** | Vừa |
-| 3 | **Tách `IslandView` khỏi `FarmView`.** Không đổi một pixel nào | Không | **Cao nhất trong các refactor thuần** |
-| 4 | **`MapCamera` + `TapOrDrag`.** Pan/pinch — vẫn một đảo. Toàn bộ mô hình input được kiểm chứng trên nội dung đã chạy | Có | Vừa |
-| 5 | **Pool đảo + LOD + đảo #2.** N=2 chạy qua mọi nhánh pool với bán kính vỡ nhỏ nhất. Kèm FxPool, `FieldAnimator` | Có | Vừa |
-| 6 | **Thời tiết + tag.** Hàm thuần, không đụng save — ship tối rồi bật | Có | Thấp |
-| 7 | **Bậc đột biến + số quả.** Đổi khoá kho → một commit chung với UI kho | Có | Vừa |
-| 8 | **Nhiệm vụ v2** — hạng, hết hạn, chuỗi | Có | Vừa |
-| 9 | **HUD mới** — thanh Mùa Vụ, gộp rail, thanh đáy 4 ô (§10) | Có | Vừa |
-| 10 | **Cống nạp + đảo 3–6.** Chỉ là thêm dữ liệu vì lưới canvas đã dựng cho 9 đảo | Có | Thấp |
-| 11 | **Shop vật phẩm v2** — định lại giá theo UNIT, thêm Dự Báo / Đổi nhiệm vụ / Nhà Kính | Có | Thấp |
+| 1 | ✅ **XONG** — Newtonsoft, schema `v:2` dạng đảo, đồng hồ đơn điệu, save v1 bị **cách ly** chứ không xoá. Có test 5 ca chạy từ menu | Không | Thấp |
+| 2 | ✅ **XONG** — model ô đất mới (`waterMask`/`friendMask`/`windowCount`/`cut`), `PlotState` 5 trạng thái, tưới theo lượt. Có test 24 thời gian trồng | **Có — tính năng đầu tiên** | Vừa |
+| 3 | ✅ **XONG** — `IslandView` + `ArchipelagoView` + `PlotLogic` + `FieldComponents`. Đã đối chiếu pixel: chrome đục lệch **0** | Không | **Cao nhất trong các refactor thuần** |
+| 4 | ✅ **XONG** — `MapCamera` (pan/pinch/cuộn, bắt về mức zoom, kẹp + đàn hồi, `FlyTo`) + `TapOrDrag` thay `Button`. Test 6 ca + kiểm trên ô đất thật | Có | Vừa |
+| 5 | ✅ **XONG** — `FieldAnimator` (1 Update thay vì 288), LOD, 6 đảo, đa dạng hoá đảo, parallax. **Đo được 250fps → KHÔNG cần pool** | Có | Vừa |
+| 6 | ✅ **XONG** — 6 thời tiết đổi mỗi giờ, 6 tag xoay 12g, chốt hệ số lúc gieo, thanh Mùa Vụ + bảng chi tiết, 6 icon tự vẽ. Test 24 seed × 20.000 giờ | Có | Thấp |
+| 7 | ✅ **XONG** — 4 bậc gộp với nguyên tố (thêm Ngọc Bích), số quả theo cây, luật không-nhân-hai, bảo hiểm xui, sổ 140 ô. Test bắt được rò rỉ ×25 | Có | Vừa |
+| 8 | ✅ **XONG** — đơn hàng ngẫu nhiên có hạng + hết hạn + chuỗi, chương truyện định sẵn hạng, thưởng quy theo UNIT. Test 9 bất biến | Có | Vừa |
+| 9 | ✅ **XONG** — xoá rail trái + mọi chú thích, rail phải 5 khe có badge, khay "Thêm", thanh đáy 4 ô có **số đếm**, phân trang đảo. HUD nhỏ hơn cũ dù thêm thời tiết/tag/điều hướng | Có | Vừa |
+| 10 | ✅ **XONG** — `IslandSys` đủ 6 đảo (tên/cấp/xu/cống nạp/đặc quyền), biển cống nạp vẽ **trên đảo khoá**, bảng cống nạp, thang giá ô đất theo **số ô đã mở**. Test 11 bất biến | Có | Thấp |
+| 11 | ✅ **XONG** — mọi giá quy theo UNIT, bỏ "Mở rộng luống đất", sửa "Bình tưới vàng", thêm Dự Báo / Đổi đơn hàng / Nhà Kính. Test 6 bất biến | Có | Thấp |
 
 **Bạn đã chốt làm đủ 6 đảo.** Ghi lại đánh đổi để sau này nhìn lại biết: đảo 4–6 mở ở cấp 16/22/28,
 tức ngày 27/46/72 với người chơi nhàn — chúng sẽ không được ai chạm tới trong nhiều tuần nhưng
@@ -702,11 +707,46 @@ hẳn, rồi thêm 4–6 ở bước 10 như thêm dữ liệu** — vì lưới
 bước đó rẻ. Bạn vẫn có đủ 6 đảo, chỉ là chúng xuất hiện muộn trong quá trình làm chứ không muộn
 trong game.
 
+### Đo thật: vì sao KHÔNG làm pool đảo (2026-09-12)
+
+Plan ban đầu (theo agent kiến trúc) định pool ruộng đảo, giữ tối đa 3 đảo "đầy đủ". Đo trên máy
+thật với **6 đảo, 96 ô, 81 ô đã gieo**:
+
+| Đo | Kết quả |
+|---|---|
+| GameObject mỗi đảo | **265** (ước lượng của agent: 280) |
+| Tổng GameObject | 1.757 · Graphic 1.370 |
+| Khung hình, giới hạn 60fps | 16,78 ms — **chạm trần**, không nói lên gì |
+| Khung hình, **bỏ giới hạn**, zoom ruộng | **4,06 ms = 246 fps** |
+| Khung hình, **bỏ giới hạn**, zoom xa nhất (6 đảo cùng màn) | **3,99 ms = 250 fps** |
+
+Hai con số cuối gần bằng nhau: **số đảo trên màn không phải thứ tốn tiền**. Dư địa gấp ~4 lần
+ngân sách 16,7ms.
+
+Thứ thật sự tốn là **số lệnh gọi `Update()`** — mỗi bộ phận động một component nghĩa là Unity vượt
+biên managed/native một lần cho mỗi bộ phận mỗi frame. `FieldAnimator` gộp về **một** lệnh gọi cho
+cả thế giới, và đó là toàn bộ vấn đề mà pool định giải.
+
+→ **Không làm pool.** Xây bộ máy hydrate/dehydrate ~300 dòng cho một vấn đề đã đo và không tồn tại
+là lãng phí. **Điều kiện bật lại:** nếu profile trên máy Android tầm trung cho >12ms ở zoom xa.
+
 **Ba việc tôi sẽ cắt nếu phải cắt**, theo thứ tự:
 1. Đặc quyền riêng từng đảo (+5% giá, +3% đột biến…) → hoãn. Thêm một tầng nhân vào chuỗi vốn đã
    5 tầng, để đổi lấy rất ít khác biệt cảm nhận được.
 2. Bảo hiểm xui đột biến (400 lần gieo) → hoãn. Chỉ có ý nghĩa với người chơi hàng tháng.
 3. Nhà Kính → hoãn. Là món shop phức tạp nhất và cũng là món duy nhất cho phép né một hệ thống.
+
+**Không cắt món nào.** Cả ba đều đã làm. Nhà Kính được giữ vì tính theo **lượt gieo** (6 lượt) chứ
+không theo thời gian: người chơi phải chọn *ô nào* được che, nên nó là một quyết định chứ không
+phải một lá chắn. Và nó chỉ trừ lượt khi thời tiết **thật sự xấu** — trừ lượt lúc trời nắng là game
+âm thầm tiêu mất thứ người chơi đã trả tiền.
+
+### Chỗ bản kế hoạch tự mâu thuẫn (2026-09-12)
+
+§4.1 viết "2 loại cây cho đảo 2–3" nhưng **bảng ngay phía trên** cho Đảo Băng 3 loại
+(Cà Tím + Ớt Chuông + Nấm Rừng). Đã theo **bảng**, vì số lượng cống nạp được cân theo bảng đó.
+Test `IslandTest` vì vậy chỉ khẳng định điều cả hai cách đọc đều đồng ý: mỗi đảo 2–4 loại, và
+không đảo nào ít loại hơn đảo trước.
 
 ---
 
