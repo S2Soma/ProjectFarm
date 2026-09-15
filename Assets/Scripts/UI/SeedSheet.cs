@@ -41,17 +41,23 @@ namespace LQFarm
             _root.offsetMax = new Vector2(0, 0);
             _root.sizeDelta = new Vector2(0, Height);
 
-            var shadow = UIKit.Img(_root, Theme.Shadow(26, 26), new Color(0, 0, 0, 0.28f), "shadow");
-            shadow.type = Image.Type.Sliced;
-            shadow.rectTransform.Stretch(-10, -16, -10, -40);    // (left, top, right, bottom)
-
-            // extends below the screen edge so only the top corners are rounded
-            var bg = UIKit.Round(_root, Theme.Cream, 26, "bg");
-            bg.rectTransform.Stretch(0, 0, 0, -40);
+            // M3 paper, extending below the screen edge so only the top corners show. Its shadow
+            // falls UPWARD onto the farm: a sheet rising out of the bottom edge is lit from the
+            // screen, and a hard 1 px edge with no shadow read as a sticker on the map.
+            var bgNode = UIKit.Node("bg", _root);
+            bgNode.Stretch(0, 0, 0, -40);
+            // paper to the screen's side edges, past a notch; the cards stay inside the safe area
+            FullBleed.On(bgNode, left: true, right: true, bottom: false, top: false);
+            var paper = Looks.Paper;
+            paper.drop = new Vector2(0f, 6f);
+            paper.blur = 24f;
+            paper.shadow = new Color(0f, 0f, 0f, 0.28f);
+            var bg = SurfaceLook.Add(bgNode, paper, 28f).Fill;
             bg.raycastTarget = true;
 
-            var grip = UIKit.Round(_root, Theme.Cream3, 3, "grip");
-            grip.rectTransform.Anchor(UIKit.Top, new Vector2(0, -8), new Vector2(64, 6));
+            var grip = UIKit.Img(_root, null, Theme.Hex("#D9C7A6"), "grip");
+            grip.rectTransform.Anchor(UIKit.Top, new Vector2(0, -9), new Vector2(64, 8));
+            Chrome.Shape(grip, 4f);
 
             _title = UIKit.Label(_root, "Chọn hạt giống", 22, Theme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
             _title.rectTransform.Anchor(UIKit.TopLeft, new Vector2(28, -16), new Vector2(460, 32));
@@ -64,7 +70,9 @@ namespace LQFarm
             // horizontal card strip
             var strip = UIKit.Node("strip", _root);
             strip.anchorMin = new Vector2(0, 0); strip.anchorMax = new Vector2(1, 1);
-            strip.offsetMin = new Vector2(16, 10); strip.offsetMax = new Vector2(-16, -76);
+            // 12 px of headroom inside the mask: the count and price badges overhang each card's
+            // top corner by 8 and were being sliced off by the strip's RectMask2D.
+            strip.offsetMin = new Vector2(16, 6); strip.offsetMax = new Vector2(-16, -70);
             var scroll = strip.gameObject.AddComponent<ScrollRect>();
             strip.gameObject.AddComponent<RectMask2D>();
             var hit = strip.gameObject.AddComponent<Image>();
@@ -75,7 +83,7 @@ namespace LQFarm
             _content.pivot = new Vector2(0, 0.5f);
             _content.anchoredPosition = Vector2.zero;
             var row = _content.gameObject.AddComponent<HorizontalLayoutGroup>();
-            row.spacing = 12; row.padding = new RectOffset(6, 6, 4, 4);
+            row.spacing = 14; row.padding = new RectOffset(6, 14, 12, 4);
             row.childControlWidth = false; row.childControlHeight = false;
             row.childForceExpandWidth = false; row.childForceExpandHeight = false;
             row.childAlignment = TextAnchor.MiddleLeft;
@@ -101,6 +109,18 @@ namespace LQFarm
         }
 
         public void SetSubtitle(string sub) { _sub.text = sub; }
+
+        /// <summary>Which plot size the cards are for. Set before <see cref="Show"/> / <see cref="Rebuild"/>.</summary>
+        public bool Big;
+
+        /// <summary>The sheet itself, and one seed's card in it — for the tutorial's pointer.</summary>
+        public RectTransform Root => _root;
+        public RectTransform CardFor(string seedId)
+        {
+            if (_content == null) return null;
+            var t = _content.Find("card_" + seedId);
+            return t as RectTransform;
+        }
 
         public void Hide()
         {
@@ -137,13 +157,16 @@ namespace LQFarm
         /// <summary>Seeds the player can plant now: owned ones first (most useful first), then
         /// the rest of the unlocked catalogue, which tapping buys. Locked seeds are not shown — a
         /// card that cannot be tapped is noise in a strip meant to be swiped quickly.</summary>
-        public static List<Seed> Order(PlayerState s)
+        public static List<Seed> Order(PlayerState s) { return Order(s, false); }
+
+        /// <summary>The same, for one plot size: trees for a big plot, everything else for a small one.</summary>
+        public static List<Seed> Order(PlayerState s, bool big)
         {
             var owned = new List<Seed>();
             var shop = new List<Seed>();
             foreach (var seed in GameData.Seeds)
             {
-                if (seed.lv > s.lv) continue;
+                if (seed.lv > s.lv || seed.big != big) continue;
                 s.seeds.TryGetValue(seed.id, out int n);
                 (n > 0 ? owned : shop).Add(seed);
             }
@@ -155,10 +178,16 @@ namespace LQFarm
 
         public void Rebuild()
         {
-            foreach (Transform c in _content) UnityEngine.Object.Destroy(c.gameObject);
+            // unparent first: Destroy is deferred, and the layout below would still count the old cards
+            for (int i = _content.childCount - 1; i >= 0; i--)
+            {
+                var c = _content.GetChild(i);
+                c.SetParent(null, false);
+                UnityEngine.Object.Destroy(c.gameObject);
+            }
             var s = GS.Local;
             var w = WeatherSys.Now(s);
-            foreach (var seed in Order(s)) BuildCard(seed, s, w);
+            foreach (var seed in Order(s, Big)) BuildCard(seed, s, w);
             LayoutRebuilder.ForceRebuildLayoutImmediate(_content);
         }
 
@@ -173,11 +202,16 @@ namespace LQFarm
             var le = card.gameObject.AddComponent<LayoutElement>();
             le.preferredWidth = CW; le.preferredHeight = CH;
 
-            var frame = UIKit.Img(card, Theme.Round(18), Theme.Rarity[Mathf.Clamp(seed.r, 0, 3)].Alpha(0.9f), "frame");
-            frame.type = Image.Type.Sliced;
-            frame.rectTransform.Stretch(-3, -3, -3, -3);
-            var face = UIKit.Round(card, afford ? Color.white : Theme.Cream3, 18, "face");
-            face.rectTransform.Stretch();
+            // A raised card with the rarity as its edge colour, instead of a rarity plate drawn
+            // 3 px outside a flat white one.
+            var cardLook = new Look
+            {
+                top = afford ? Color.white : Theme.Cream3, bottom = afford ? Theme.Hex("#FBF3E4") : Theme.Hex("#DCCDB1"),
+                edge = Theme.Rarity[Mathf.Clamp(seed.r, 0, 3)].Alpha(afford ? 0.95f : 0.5f), edgeW = 3f,
+                rim = new Color(1f, 1f, 1f, 0.9f), rimW = 2f, rimFade = 0.2f,
+                shadow = new Color(0.25f, 0.16f, 0.05f, 0.18f), blur = 6f, drop = new Vector2(0f, -3f),
+            };
+            var face = SurfaceLook.Add(card, cardLook, 18f).Fill;
             face.raycastTarget = true;
 
             //   art       top 6 .. 78
@@ -190,44 +224,64 @@ namespace LQFarm
 
             // bag count, or the price when this tap would buy one
             var pill = UIKit.Node("pill", card);
-            pill.Anchor(UIKit.TopRight, new Vector2(-6, -6), new Vector2(have > 0 ? 44 : 66, 24));
-            UIKit.Round(pill, have > 0 ? Theme.Ink.Alpha(0.78f) : Theme.Amber, 12, "bg").rectTransform.Stretch();
+            // Overhangs the card's corner by 8 px so it never sits on the artwork — at -6 inside,
+            // the orange price badge covered the top of the pumpkin.
+            pill.Anchor(UIKit.TopRight, new Vector2(8, 8), new Vector2(have > 0 ? 46 : 70, 26));
+            var badge = have > 0 ? Looks.Glass : Looks.BtnAmber;
+            badge.lip = 0f; badge.shadow = new Color(0f, 0f, 0f, 0.2f); badge.blur = 4f; badge.drop = new Vector2(0, -2);
+            badge.edgeW = 1.5f; badge.rimW = 1.5f;
+            SurfaceLook.Add(pill, badge);
             if (have > 0)
-                UIKit.Label(pill, "×" + have, 15, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold).rectTransform.Stretch();
+                UIKit.LabelOutlined(pill, "×" + have, 15, Color.white).rectTransform.Stretch();
             else
             {
                 var ci = UIKit.Img(pill, Theme.Skin.Coin, Color.white, "coin");
                 ci.preserveAspect = true;
-                ci.rectTransform.Anchor(UIKit.Left, new Vector2(4, 0), new Vector2(18, 18));
-                UIKit.Label(pill, seed.price == 0 ? "0" : Fmt.N(seed.price), 14, Theme.Ink, TextAnchor.MiddleRight, FontStyle.Bold)
-                     .rectTransform.Stretch(22, 0, 6, 0);
+                ci.rectTransform.Anchor(UIKit.Left, new Vector2(5, 0), new Vector2(18, 18));
+                UIKit.LabelOutlined(pill, seed.price == 0 ? "0" : Fmt.N(seed.price), 14, Color.white, TextAnchor.MiddleRight, badge.inkLine)
+                     .rectTransform.Stretch(22, 0, 9, 0);
             }
 
             var nm = UIKit.Label(card, seed.name, 17, Theme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
-            nm.rectTransform.Anchor(UIKit.Top, new Vector2(0, -80), new Vector2(CW - 8, 24));
+            nm.rectTransform.Anchor(UIKit.Top, new Vector2(0, -78), new Vector2(CW - 8, 26));
 
             int grow = Mathf.RoundToInt(s.GrowTimeIn(seed, w, 0));
             int profit = s.HarvestValue(seed.id, 0) - seed.price;
-            var l1 = UIKit.Label(card, "Chín " + Fmt.Time(grow), 14, Theme.InkSoft, TextAnchor.MiddleCenter);
-            l1.rectTransform.Anchor(UIKit.Top, new Vector2(0, -104), new Vector2(CW - 8, 20));
+            // the time in THIS weather, and how often the crop drinks — the two facts that decide whether
+            // it is a crop to tend now or one to leave growing
+            var l1 = UIKit.Label(card, "Chín " + Fmt.Time(grow) + " · tưới " + seed.waters, 14, Theme.InkSoft, TextAnchor.MiddleCenter);
+            l1.rectTransform.Anchor(UIKit.Top, new Vector2(0, -102), new Vector2(CW - 8, 20));
             var l2 = UIKit.Label(card, "Lãi +" + Fmt.N(profit) + " xu", 14, Theme.GreenDeep, TextAnchor.MiddleCenter, FontStyle.Bold);
-            l2.rectTransform.Anchor(UIKit.Top, new Vector2(0, -124), new Vector2(CW - 8, 20));
+            l2.rectTransform.Anchor(UIKit.Top, new Vector2(0, -120), new Vector2(CW - 8, 20));
 
-            // The crop's tag this half-day, if it has one; otherwise its rarity. One chip — two
+            // The crop's bonus this half-day, if it has one; otherwise its rarity. One line — two
             // would not fit a 164 px card without shrinking the text below legibility.
+            //
+            // They used to share one pill, so "Hiếm" and "Kinh Nghiệm" were the same blue lozenge
+            // and a player could not tell a rarity (permanent, already shown by the card's edge)
+            // from a bonus (worth planting for, gone at 18:00). The bonus is now the only pill,
+            // starred; rarity is plain text in its colour.
             var tag = TagSys.TagOf(s, seed.id, GS.Now);
-            string chipText; Color chipCol;
-            if (tag != CropTag.None) { var td = TagSys.Def(tag); chipText = td.name; chipCol = Theme.Hex(td.hex); }
+            if (tag != CropTag.None)
+            {
+                var td = TagSys.Def(tag);
+                var chip = UIKit.Node("tag", card);
+                chip.Anchor(UIKit.Bottom, new Vector2(0, 11), new Vector2(128, 24));
+                var ring = UIKit.Img(chip, null, Theme.Hex("#FFE08A"), "ring");
+                ring.rectTransform.Stretch(-2, -2, -2, -2);
+                Chrome.Shape(ring, 14f);
+                var chipBg = UIKit.Img(chip, null, Theme.Hex(td.hex), "bg");
+                chipBg.rectTransform.Stretch();
+                Chrome.Shape(chipBg, 12f);
+                UIKit.Label(chip, "★ " + td.name, 13, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold).rectTransform.Stretch();
+            }
             else
             {
                 string[] rn = { "Thường", "Hiếm", "Sử thi", "Huyền thoại" };
-                chipText = rn[Mathf.Clamp(seed.r, 0, 3)];
-                chipCol = Theme.Rarity[Mathf.Clamp(seed.r, 0, 3)];
+                int r = Mathf.Clamp(seed.r, 0, 3);
+                var rl = UIKit.Label(card, rn[r], 14, Color.Lerp(Theme.Rarity[r], Theme.Ink, 0.35f), TextAnchor.MiddleCenter, FontStyle.Bold);
+                rl.rectTransform.Anchor(UIKit.Bottom, new Vector2(0, 12), new Vector2(CW - 12, 22));
             }
-            var chip = UIKit.Node("tag", card);
-            chip.Anchor(UIKit.Bottom, new Vector2(0, 8), new Vector2(112, 22));
-            UIKit.Round(chip, chipCol, 11, "bg").rectTransform.Stretch();
-            UIKit.Label(chip, chipText, 13, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold).rectTransform.Stretch();
 
             var b = card.gameObject.AddComponent<Button>();
             b.targetGraphic = face;

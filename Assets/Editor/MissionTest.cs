@@ -123,7 +123,7 @@ namespace LQFarm.EditorTools
             var m = s.contracts[0];
             m.p = m.need;
 
-            int coinBefore = s.coin;
+            long coinBefore = s.coin;
             bool ok = s.ClaimContract(0);
             Check(fails, ok, "không nhận được đơn đã hoàn thành");
             Check(fails, s.streak == 1, $"chuỗi = {s.streak} sau một lần nhận");
@@ -197,6 +197,11 @@ namespace LQFarm.EditorTools
                     { fails.Add($"đơn chỉ định cây không tồn tại: {m.cropId}"); return; }
                     if (m.cropId != null && GameData.Get(m.cropId).lv > s.lv)
                     { fails.Add($"đơn chỉ định cây chưa mở khoá: {m.cropId}"); return; }
+                    // a named crop must be one that grows in hours, and the contract must outlive growing it
+                    if (m.cropId != null && GameData.Get(m.cropId).grow > MissionSys.MaxContractGrowSeconds)
+                    { fails.Add($"đơn chỉ định {m.cropId}: cây mọc {GameData.Get(m.cropId).grow / 3600f:0.#} giờ, quá trần"); return; }
+                    if (m.cropId != null && m.expiresAt - GS.Now < GameData.Get(m.cropId).grow * 1000L)
+                    { fails.Add($"đơn chỉ định {m.cropId}: hết hạn trước khi kịp trồng xong một vụ"); return; }
                 }
         }
     }

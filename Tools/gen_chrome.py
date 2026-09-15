@@ -5,7 +5,8 @@ gives real, inspectable, replaceable asset files — and lets the shapes carry a
 bevel that would be wasteful to compute every launch. Shading is baked as white
 luminance, so Unity's colour tint (a multiply) keeps it when the plate is recoloured.
 
-    uv run --with pillow python Tools/gen_chrome.py
+    uv run --with pillow python Tools/gen_chrome.py              # everything
+    uv run --with pillow python Tools/gen_chrome.py materials    # only the material shapes
 """
 from PIL import Image
 import math, os, random
@@ -191,16 +192,91 @@ def island(W=660, H=480):
     return img
 
 
+def shape(r, top_only=False):
+    """Pure white rounded square, radius r px, 1 px anti-aliased edge and NO baked shading.
+
+    These are the material system's building blocks (see Assets/Scripts/UI/Surface.cs): a
+    surface is several of them stacked — edge, rim, fill — each tinted and given a vertex
+    gradient in code. Baked shading would fight the gradient, so there is none.
+
+    They are drawn large and shown with Image.pixelsPerUnitMultiplier > 1, so a corner is
+    always minified (sharp) rather than magnified (soft) on a 1.5x-3x phone screen. The old
+    round_N plates were 1x and every corner on a 1080p screen was a blurred 1.5x upscale."""
+    w = 2 * r + 2
+    h = (r + 2) if top_only else w
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    px = img.load()
+    for y in range(h):
+        for x in range(w):
+            # a top-only shape is the upper half of a full one, so bottom corners stay square
+            d = round_dist(x + 0.5, y + 0.5, w, w if not top_only else 4 * r + 4, r)
+            a = max(0.0, min(1.0, 0.5 - d))
+            if a > 0:
+                px[x, y] = (255, 255, 255, int(round(a * 255)))
+    return img
+
+
+def soft(r, blur):
+    """Gaussian-falloff rounded rect: a drop shadow whose inner shape has radius r px and
+    whose penumbra is blur px wide, both scaled together by the multiplier."""
+    rr = r + blur
+    w = 2 * rr + 2
+    img = Image.new("RGBA", (w, w), (0, 0, 0, 0))
+    px = img.load()
+    sigma = blur / 2.6
+    for y in range(w):
+        for x in range(w):
+            # distance to the INNER shape, which sits blur px inside the canvas
+            d = round_dist(x + 0.5 - blur, y + 0.5 - blur, w - 2 * blur, w - 2 * blur, r)
+            a = 0.5 * math.erfc(d / (sigma * math.sqrt(2.0)))
+            if a > 0.002:
+                px[x, y] = (255, 255, 255, int(round(min(1.0, a) * 255)))
+    return img
+
+
+META_TEMPLATE = "Assets/Resources/Art/chrome/round_26.png.meta"
+
+
+def save_sliced(img, name, border):
+    """Save a PNG plus a meta with its 9-slice border and mipmaps on. Mipmaps matter here:
+    these sprites are always shown minified, and without them a 4x minified corner aliases."""
+    save(img, name)
+    meta = os.path.join(OUT, name + ".png.meta")
+    import re, uuid
+    if os.path.exists(meta):
+        guid = re.search(r"guid: (\w+)", open(meta).read()).group(1)
+    else:
+        guid = uuid.uuid4().hex
+    m = open(META_TEMPLATE).read()
+    m = re.sub(r"guid: \w+", "guid: " + guid, m, count=1)
+    m = m.replace("enableMipMap: 0", "enableMipMap: 1")
+    m = re.sub(r"spriteBorder: \{[^}]*\}", "spriteBorder: {x: %d, y: %d, z: %d, w: %d}" % border, m)
+    m = re.sub(r"filterMode: \d", "filterMode: 2", m, count=1)   # trilinear
+    open(meta, "w").write(m)
+
+
+def materials():
+    for r in (16, 48, 128):
+        save_sliced(shape(r), "shape_%d" % r, (r, r, r, r))
+    save_sliced(shape(48, top_only=True), "top_48", (48, 0, 48, 48))
+    # two penumbra ratios: tight (blur = r/2) for HUD chips and buttons, wide (blur = r) for sheets
+    save_sliced(soft(64, 32), "soft_tight", (96, 96, 96, 96))
+    save_sliced(soft(64, 64), "soft_wide", (128, 128, 128, 128))
+
+
+import sys
+if len(sys.argv) > 1 and sys.argv[1] == "materials":
+    materials()
+    sys.exit(0)
+
 print("chrome ->", OUT)
+materials()
 for r in (6, 12, 18, 26):
     save(rounded(r), "round_%d" % r)
-for r in (18, 26):
-    save(shadow(r), "shadow_%d" % r)
 save(circle(), "circle")
 save(ring(0.12), "ring_12")
 save(ring(0.17), "ring_17")
 save(glow(), "glow")
 save(vignette(), "vignette")
-save(ramp([hexc("#E8F6FD"), hexc("#C6EBFB"), hexc("#7FCCEF"), hexc("#3AA6DE")]), "sky")
-save(ramp([hexc("#1F6E9C"), hexc("#49B6E0"), hexc("#C6EBFB")]), "sea")
-save(island(), "island")
+# sky, sea and island used to be baked here; the sky is Tools/gen_sky.py now and each island has
+# its own painting from Tools/gen_islands.py

@@ -10,6 +10,11 @@ namespace LQFarm
         public string id, name, art, badge;
         public int r, lv, price, grow, xp, en, sell, colors;
 
+        /// <summary>A tree: planted only in a big plot (Đảo Khổng Lồ), and a small crop never is.
+        /// Big crops sit outside the small ladder — they are left out of UNIT, contracts and the
+        /// energy goal — because one big plot is four cells of land and pays like four.</summary>
+        public bool big;
+
         /// <summary>Fruits per harvest.
         ///
         /// <see cref="sell"/> is the value of a WHOLE harvest, so per-fruit price is sell/fruits
@@ -20,12 +25,21 @@ namespace LQFarm
         /// ("1080 Anh Đào") reachable and gives the two kinds of crop different jobs.</summary>
         public int fruits = 1;
 
+        /// <summary>How many times this crop gets thirsty while it grows (1 to <see cref="WaterSys.MaxWindows"/>).</summary>
+        public int waters = 1;
+
+        /// <summary>Seconds ONE watering takes off the grow time. A time, not a share: the player reads
+        /// "chín sớm 16p" and the number is the same in every weather except drought, which doubles it.</summary>
+        public int waterCut;
+
         public Seed(string id, string name, string art, int r, int lv, int price,
-                    int grow, int xp, int en, int sell, int colors, string badge, int fruits = 1)
+                    int grow, int xp, int en, int sell, int colors, string badge, int fruits,
+                    int waters, int waterCut)
         {
             this.id = id; this.name = name; this.art = art; this.r = r; this.lv = lv;
             this.price = price; this.grow = grow; this.xp = xp; this.en = en;
             this.sell = sell; this.colors = colors; this.badge = badge; this.fruits = fruits;
+            this.waters = waters; this.waterCut = waterCut;
         }
 
         /// <summary>What one fruit sells for before any multiplier.</summary>
@@ -90,40 +104,76 @@ namespace LQFarm
 
     public static class GameData
     {
+        /// <summary>The hard ceiling on how long any plot takes, after weather, mutation and every
+        /// perk (<see cref="PlayerState.GrowTimeIn"/> clamps to it). A crop planted before bed is
+        /// always ripe by the same time tomorrow.</summary>
+        public const float MaxGrowSeconds = 24f * 3600f;
+
+        /// <summary>Durations a player can read at a glance: whole seconds under a minute, 5 s under
+        /// ten minutes, whole minutes under two hours, then 5 minutes. "Chín 1p 59s" was the level
+        /// perk taking 0,6% off a two-minute carrot.</summary>
+        public static float NiceSeconds(float sec)
+        {
+            float step = sec < 60f ? 1f : sec < 600f ? 5f : sec < 7200f ? 60f : 300f;
+            return Mathf.Max(1f, Mathf.Round(sec / step) * step);
+        }
+
         // rarity: 0 thuong | 1 hiem | 2 su thi | 3 huyen thoai
+        //
+        // 2026-09-15: a Hay Day ladder, 2 minutes (carrot) to 24 hours (avocado), set by the owner.
+        // The numbers come from one rule (written down in CLAUDE.md, checked by Kiểm tra hành trình chơi):
+        //
+        //  - PER HARVEST, a longer crop always pays more, so it is the right thing to plant before
+        //    leaving the game: margin grows with grow time^0,55 (and 1,5% per unlock level).
+        //  - PER HOUR, a short crop always pays more, so it is the right thing to plant while playing:
+        //    a tended carrot earns ~10x an avocado's hour. Past ten hours the hourly rate stops
+        //    falling (and creeps up with level), so every late unlock is better than the one before
+        //    at the long absence it is for.
+        //  - XP leans harder on short crops than coins do (time^0,45): active play is how you level.
+        //  - Seeds cost 40-55% of the base sale price by rarity; energy grows with the square root of
+        //    the time. Waterings: 1 up to 5 min, 2 up to 45 min, 3 up to 8 h, 4 beyond; together they
+        //    take ~25% off a carrot, 20% off crops up to 8 h, ~16% off the long ones.
+        //
+        //                                                    lv   price   grow     xp   en    sell     quả  tưới  giây/lần
         public static readonly Seed[] Seeds =
         {
-            new Seed("carrot",     "Cà Rốt",       "carrot",     0, 1,  0,    40,  8,   2,  42,   4, null, 6),
-            new Seed("wheat",      "Lúa Mì",       "wheat",      0, 1,  83,   55,  12,  2,  118,  4, null, 5),
-            new Seed("tomato",     "Cà Chua",      "tomato",     0, 2,  224,  80,  20,  3,  268,  4, null, 5),
-            new Seed("potato",     "Khoai Tây",    "potato",     0, 3,  251,  92,  24,  3,  302,  4, null, 5),
-            new Seed("corn",       "Ngô",          "corn",       0, 4,  298,  105, 28,  3,  352,  4, null, 4),
+            new Seed("carrot",     "Cà Rốt",       "carrot",     0,  1,      0,    120,    10,   2,     90, 4, null,   6, 1,    30),
+            new Seed("wheat",      "Lúa Mì",       "wheat",      0,  1,     90,    300,    15,   3,    225, 4, null,   5, 1,    60),
+            new Seed("tomato",     "Cà Chua",      "tomato",     0,  2,    140,    600,    20,   4,    350, 4, null,   5, 2,    60),
+            new Seed("potato",     "Khoai Tây",    "potato",     0,  3,    170,    900,    25,   5,    425, 4, null,   5, 2,    90),
+            new Seed("corn",       "Ngô",          "corn",       0,  4,    190,   1200,    30,   6,    480, 4, null,   4, 2,   120),
 
-            new Seed("mushroom",   "Nấm Rừng",     "mushroom",   1, 5,  137,  70,  42,  4,  176,  4, "exp", 4),
-            new Seed("leek",       "Tỏi Tây",      "leek",       1, 6,  199,  96,  34,  4,  246,  4, null, 4),
-            new Seed("garlic",     "Hành Bổ",      "garlic",     1, 7,  225,  110, 38,  4,  282,  4, null, 4),
-            new Seed("broccoli",   "Súp Lơ Xanh",  "broccoli",   1, 8,  247,  122, 42,  4,  312,  4, null, 4),
-            new Seed("pepper",     "Ớt Chuông",    "pepper",     1, 9,  266,  134, 46,  5,  338,  4, null, 4),
-            new Seed("eggplant",   "Cà Tím",       "eggplant",   1, 10, 285,  146, 50,  5,  364,  4, null, 4),
-            new Seed("cauliflower","Súp Lơ Trắng", "cauliflower",1, 11, 357,  168, 58,  5,  452,  4, "helm", 4),
+            new Seed("mushroom",   "Nấm Rừng",     "mushroom",   1,  5,    290,   1800,    40,   8,    640, 4, "exp",  4, 2,   180),
+            new Seed("leek",       "Tỏi Tây",      "leek",       1,  6,    360,   2700,    45,   9,    800, 4, null,   4, 2,   270),
+            new Seed("garlic",     "Hành Bổ",      "garlic",     1,  7,    410,   3600,    55,  11,    920, 4, null,   4, 3,   240),
+            new Seed("broccoli",   "Súp Lơ Xanh",  "broccoli",   1,  8,    500,   5400,    70,  13,   1120, 4, null,   4, 3,   360),
+            new Seed("pepper",     "Ớt Chuông",    "pepper",     1,  9,    590,   7200,    80,  15,   1320, 4, null,   4, 3,   480),
+            new Seed("eggplant",   "Cà Tím",       "eggplant",   1, 10,    670,   9000,    90,  17,   1480, 4, null,   4, 3,   600),
+            new Seed("cauliflower","Súp Lơ Trắng", "cauliflower",1, 11,    720,  10800,   100,  19,   1600, 4, "helm", 4, 3,   720),
 
-            new Seed("pumpkin",    "Bí Ngô",       "pumpkin",    2, 12, 285,  150, 62,  6,  392,  4, null, 3),
-            new Seed("radish",     "Củ Cải",       "radish",     2, 13, 385,  211, 65,  5,  406,  4, "sprout", 4),
-            new Seed("beetroot",   "Củ Dền",       "beetroot",   2, 14, 412,  224, 72,  6,  528,  4, "helm", 3),
-            new Seed("grape",      "Nho Tím",      "grape",      2, 15, 448,  240, 96,  6,  566,  4, "exp", 6),
-            new Seed("cabbage",    "Bắp Cải",      "cabbage",    2, 16, 486,  258, 84,  7,  618,  4, "helm", 3),
-            new Seed("lemon",      "Chanh Vàng",   "lemon",      2, 17, 522,  272, 90,  7,  664,  4, "helm", 4),
-            new Seed("orange",     "Cam",          "orange",     2, 19, 604,  300, 104, 8,  772,  4, "helm", 4),
-            new Seed("pear",       "Lê",           "pear",       2, 21, 668,  318, 112, 8,  856,  4, "helm", 3),
+            new Seed("pumpkin",    "Bí Ngô",       "pumpkin",    2, 12,    990,  14400,   120,  22,   1980, 4, null,   3, 3,   960),
+            new Seed("radish",     "Củ Cải",       "radish",     2, 13,   1100,  18000,   140,  24,   2240, 4, "sprout", 4, 3, 1200),
+            new Seed("beetroot",   "Củ Dền",       "beetroot",   2, 14,   1200,  21600,   150,  27,   2430, 4, "helm", 3, 3,  1440),
+            new Seed("grape",      "Nho Tím",      "grape",      2, 15,   1300,  25200,   170,  29,   2640, 4, "exp",  6, 3,  1680),
+            new Seed("cabbage",    "Bắp Cải",      "cabbage",    2, 16,   1400,  28800,   180,  31,   2820, 4, "helm", 3, 3,  1800),
+            new Seed("lemon",      "Chanh Vàng",   "lemon",      2, 17,   1600,  36000,   210,  35,   3160, 4, "helm", 4, 4,  1440),
+            new Seed("pear",       "Lê",           "pear",       2, 21,   1800,  43200,   270,  38,   3600, 4, "helm", 3, 4,  1740),
 
-            new Seed("peach",      "Táo Đỏ",       "peach",      3, 22, 742,  340, 126, 9,  962,  4, "helm", 3),
-            new Seed("strawberry", "Dâu Tây",      "strawberry", 3, 23, 806,  356, 168, 9,  1042, 4, "exp", 6),
-            new Seed("cherries",   "Anh Đào",      "cherries",   3, 24, 874,  372, 142, 10, 1128, 4, "helm", 6),
-            new Seed("banana",     "Chuối",        "banana",     3, 25, 948,  392, 152, 10, 1224, 4, "helm", 5),
-            new Seed("watermelon", "Dưa Hấu",      "watermelon", 3, 26, 1026, 410, 164, 11, 1328, 4, "helm", 2),
-            new Seed("pineapple",  "Dứa",          "pineapple",  3, 28, 1120, 430, 176, 11, 1440, 4, "helm", 2),
-            new Seed("coconut",    "Dừa",          "coconut",    3, 29, 1180, 448, 188, 12, 1546, 4, "sprout", 3),
-            new Seed("avocado",    "Bơ Sáp",       "avocado",    3, 30, 1280, 470, 204, 12, 1690, 4, "helm", 2),
+            new Seed("peach",      "Đào",          "peach",      3, 22,   2400,  50400,   320,  41,   4350, 4, "helm", 3, 4,  2100),
+            new Seed("strawberry", "Dâu Tây",      "strawberry", 3, 23,   2600,  57600,   360,  44,   4740, 4, "exp",  6, 4,  2400),
+            new Seed("cherries",   "Anh Đào",      "cherries",   3, 24,   2850,  64800,   410,  46,   5220, 4, "helm", 6, 4,  2700),
+            new Seed("watermelon", "Dưa Hấu",      "watermelon", 3, 26,   3150,  72000,   480,  49,   5700, 4, "helm", 2, 4,  3000),
+            new Seed("pineapple",  "Dứa",          "pineapple",  3, 28,   3350,  79200,   550,  51,   6100, 4, "helm", 2, 4,  3300),
+            new Seed("avocado",    "Bơ Sáp",       "avocado",    3, 30,   3600,  86400,   620,  54,   6500, 4, "helm", 2, 4,  3600),
+
+            // Big crops: trees for the big plots of Đảo Khổng Lồ. One big plot is four cells, so a
+            // tree pays what four small plots would earn from a small crop of the same length at the
+            // tree's level, and gives twice (not four times) the energy: chests would otherwise come
+            // every other harvest.
+            new Seed("apple",      "Táo",          "apple",      1,  6,   4500,  21600,   480,  54,  10000, 4, null,   8, 3,  1440) { big = true },
+            new Seed("orange",     "Cam",          "orange",     2,  8,   7000,  36000,   640,  69,  14000, 4, null,   8, 4,  1440) { big = true },
+            new Seed("banana",     "Chuối",        "banana",     2, 11,   9900,  57600,  1000,  88,  19800, 4, null,   6, 4,  2400) { big = true },
+            new Seed("coconut",    "Dừa",          "coconut",    3, 15,  15600,  86400,  1600, 107,  28400, 4, null,   4, 4,  3600) { big = true },
         };
 
         static Dictionary<string, Seed> _byId;
@@ -136,17 +186,87 @@ namespace LQFarm
         }
 
         /// <summary>16 plots max; a new plot every two levels.</summary>
+        /// <summary>What a level costs, as REDESIGN.md §4.3 set it: about 0.30 + 0.15·(lv−1) days of
+        /// play per level, XP and coins alike.
+        ///
+        /// The web build's formula (3.600 XP × 1,28^lv and 10.000·lv + 5.000 coins) was flat at
+        /// both ends: the FIRST level cost 15.000 coins against a 5.000 start and ~45 coins a
+        /// carrot — three days — so a new player filled the XP bar and then sat on "Chưa đủ điều
+        /// kiện" with no idea why; and by level 27 a level took eleven days. Anchor rows from the
+        /// plan, log-interpolated between them, and ×1,08 per level past 30.
+        ///
+        /// 2026-09-14: the first ten levels made cheaper again (a new player found them slow) —
+        /// level 1 is now a couple of minutes of carrots, level 5 about a quarter of an hour.
+        ///
+        /// 2026-09-15 (crops of 2 min to 24 h): re-fitted to the session journey with no gift code. A level
+        /// takes minutes on day one, about a day at level 10, two days at 20 and two and a half at 30, and
+        /// never more than four (Kiểm tra hành trình chơi prints the table). XP flattens from 17 to 22,
+        /// where the farm stops growing between Đảo Hoả and Đảo Lôi and levels 18–20 unlock no crop; coins
+        /// carry more of the late levels so they do not pile up with nothing to buy. Saves priced on the old
+        /// table are rescaled on load (SaveIO.MigrateEconomy).</summary>
+        static readonly (int lv, float xp, float coin)[] LevelAnchors =
+        {
+            (1, 150f, 800f), (2, 400f, 2000f), (3, 900f, 4500f), (4, 1800f, 9000f), (5, 3000f, 16000f),
+            (6, 7000f, 40000f), (8, 25000f, 180000f), (10, 50000f, 480000f), (12, 80000f, 900000f),
+            (15, 130000f, 1500000f), (20, 225000f, 2600000f), (25, 370000f, 5500000f), (30, 520000f, 9000000f),
+        };
+
+        /// <summary>The table every save written before <see cref="SaveIO.EconomyVersion"/> 1 was balanced
+        /// for (2026-09-14, crops of 40 s to 70 min). Kept ONLY so <see cref="SaveIO.MigrateEconomy"/> can
+        /// tell where on that curve an old farm stood; nothing in the game reads it.</summary>
+        static readonly (int lv, float xp, float coin)[] LegacyLevelAnchors =
+        {
+            (1, 150f, 800f), (2, 320f, 1500f), (3, 650f, 2600f), (4, 1100f, 4200f), (5, 2000f, 6500f),
+            (6, 3200f, 9500f), (8, 7000f, 18000f), (10, 14000f, 32000f), (12, 26000f, 55000f),
+            (15, 60000f, 120000f), (20, 160000f, 260000f), (25, 450000f, 620000f), (30, 1000000f, 1150000f),
+        };
+
+        static float LevelCurve(int lv, bool xp) { return Curve(LevelAnchors, lv, xp); }
+
+        static float Curve((int lv, float xp, float coin)[] anchors, int lv, bool xp)
+        {
+            lv = Mathf.Max(1, lv);
+            var last = anchors[anchors.Length - 1];
+            if (lv >= last.lv) return (xp ? last.xp : last.coin) * Mathf.Pow(1.08f, lv - last.lv);
+            for (int i = 1; i < anchors.Length; i++)
+            {
+                var a = anchors[i - 1]; var b = anchors[i];
+                if (lv > b.lv) continue;
+                float va = xp ? a.xp : a.coin, vb = xp ? b.xp : b.coin;
+                float t = (lv - a.lv) / (float)(b.lv - a.lv);
+                return va * Mathf.Pow(vb / va, t);
+            }
+            return xp ? anchors[0].xp : anchors[0].coin;
+        }
+
+        /// <summary>XP and coins a level cost under the old table (see <see cref="LegacyLevelAnchors"/>).</summary>
+        public static void LegacyLevel(int lv, out int xpNeed, out int cost)
+        {
+            xpNeed = Nice(Curve(LegacyLevelAnchors, lv, true));
+            cost = Nice(Curve(LegacyLevelAnchors, lv, false));
+        }
+
+        /// <summary>Two significant figures' worth of rounding, so the panel reads 5.700 rather
+        /// than 5.677.</summary>
+        static int Nice(float v)
+        {
+            float step = v < 1000f ? 10f : v < 100000f ? 100f : 1000f;
+            return Mathf.Max(10, Mathf.RoundToInt(v / step) * (int)step);
+        }
+
         public static LevelInfo Level(int lv)
         {
             return new LevelInfo
             {
-                xpNeed = Mathf.RoundToInt(3600f * Mathf.Pow(1.28f, lv - 1)),
-                growCut = Mathf.Min(0.45f, 0.01f * lv),
+                xpNeed = Nice(LevelCurve(lv, true)),
+                // 0,6% faster per level, capped at 20%: at 1% (cap 45%) the long late crops were
+                // cut back into short ones, undoing the point of making them long
+                growCut = Mathf.Min(0.20f, 0.006f * lv),
                 mutate = Mathf.Min(0.45f, 0.012f * lv + 0.06f),
                 priceUp = Mathf.Min(1.2f, 0.02f * lv + 0.06f),
                 energyUp = Mathf.Min(0.5f, 0.004f * lv),
                 plots = Mathf.Min(16, 9 + (lv - 1) / 2),
-                cost = 10000 * lv + 5000
+                cost = Nice(LevelCurve(lv, false))
             };
         }
 
@@ -162,6 +282,13 @@ namespace LQFarm
                 "Chắc chắn nhận được một vật phẩm hiếm cùng lượng lớn xu nông trại."),
         };
 
+        /// <summary>The story missions — the strip under the player card always shows the first
+        /// unclaimed one, so no step may be a wall. 2026-09-15: the last step is level 12 (Đảo Băng's
+        /// gate), not 13 — with hour-long crops and a session-based day, 12 → 13 alone took the
+        /// reference player three days. Tuned against Tools ▸ LQ Farm ▸ Kiểm tra hành
+        /// trình chơi, which plays the game from a new farm: the level steps were 8 / 16 / 25 (the
+        /// strip sat on "Đạt cấp độ 16" for 6–10 hours of non-stop play) and the visit step asked for
+        /// ten visits in a game with six neighbours who can each be visited once a day.</summary>
         public static readonly Chapter[] Chapters =
         {
             new Chapter("Nông dân tập sự", new[]
@@ -176,21 +303,21 @@ namespace LQFarm
                 new Task("c2a", "Bán nông sản bất kỳ",  "sell",    20, 2000, 2000),
                 new Task("c2b", "Thu hoạch cà chua",    "harvest", 12, 2000, 2000, "tomato"),
                 new Task("c2c", "Mở rương thần kỳ",     "chest",   3,  2500, 2500),
-                new Task("c2d", "Đạt cấp độ trang trại","level",   8,  3000, 3500),
+                new Task("c2d", "Đạt cấp độ trang trại","level",   7,  3000, 3500),
             }),
             new Chapter("Chuyên gia cây trồng", new[]
             {
                 new Task("c3a", "Thu hoạch khoai tây",  "harvest", 16, 5000, 5000, "potato"),
                 new Task("c3b", "Khoai tây để bán",     "sellCrop",2,  5000, 5000, "potato"),
-                new Task("c3c", "Đạt cấp độ trang trại","level",   16, 5000, 5000),
+                new Task("c3c", "Đạt cấp độ trang trại","level",   10, 5000, 5000),
                 new Task("c3d", "Thu hoạch cây đột biến","mutate", 5,  6000, 6000),
             }),
             new Chapter("Bậc thầy nông trại", new[]
             {
                 new Task("c4a", "Thu hoạch ngô",        "harvest", 24, 9000,  9000, "corn"),
-                new Task("c4b", "Thăm nom bạn bè",      "visit",   10, 9000,  9000),
+                new Task("c4b", "Thăm nom bạn bè",      "visit",   6,  9000,  9000),
                 new Task("c4c", "Thu thập bộ sưu tập",  "collect", 12, 12000, 12000),
-                new Task("c4d", "Đạt cấp độ trang trại","level",   25, 15000, 20000),
+                new Task("c4d", "Đạt cấp độ trang trại","level",   12, 15000, 20000),
             }),
         };
 
@@ -203,40 +330,27 @@ namespace LQFarm
             new Task("d5", "Thăm nom 5 người bạn",   "visit",   5,  1500, 1500),
         };
 
-        /// <summary>Cosmetics. The sub-labels used to be baked strings like "0/1 có thể mua" and
-        /// the corner badge a baked "22n 10g" — neither ever changed, so the counter still said
-        /// 0/1 after buying and the countdown never counted. Both are now either computed in the
-        /// panel or absent.</summary>
-        public static readonly ShopItem[] ShopCoin =
-        {
-            new ShopItem("s1", "Khung ảnh Mùa Vàng",  "Trang trí hồ sơ",  "cheese",   19999, ""),
-            new ShopItem("s2", "Hiệu ứng Lá Bay",     "Trang trí hồ sơ",  "bread",    19999, ""),
-            new ShopItem("s3", "Chân dung nông dân",  "Trang trí hồ sơ",  "egg",      19999, ""),
-            new ShopItem("s4", "Mảnh ngọc bí ẩn",     "Trang trí hồ sơ", "grape",    1200,  ""),
-            new ShopItem("s5", "Khung hình bạc",      "Trang trí hồ sơ",  "salad",    8800,  ""),
-            new ShopItem("s6", "Biểu cảm Vui Vẻ",     "Trang trí hồ sơ",  "honey",    6600,  ""),
-            new ShopItem("s7", "Rương bí ẩn",         "Trang trí hồ sơ",  "coconut",  15000, ""),
-            new ShopItem("s8", "Huy hiệu Nhà Nông",   "Trang trí hồ sơ",  "lemon",    9900,  ""),
-            new ShopItem("s9", "Bó hồng nông trại",   "Trang trí hồ sơ",  "cherries", 3500,  ""),
-        };
-
         /// <summary>The goods shelf. Prices here are IGNORED — see <see cref="ShopSys.PriceOf"/>,
-        /// which quotes everything in UNIT so the shelf stays relevant at every level. The int is
-        /// kept only so the type is shared with the cosmetics tab.
+        /// which quotes everything in UNIT so the shelf stays relevant at every level. The Trang trí
+        /// shelf lives in <see cref="Cosmetics"/>.
         ///
         /// "Mở rộng luống đất" is gone. A plot for 12.000 flat undercut the plot ladder, which is
         /// now the largest coin sink in the game and the reason levelling is worth anything — a
         /// shop item that sells the same thing cheaper turns that whole system off.</summary>
         public static readonly ShopItem[] ShopGoods =
         {
-            new ShopItem("g1", "Bình tưới vàng",     "Tưới hết, bỏ qua cữ",   "lime",       0, "", "water3"),
-            new ShopItem("g2", "Phân bón thần kỳ",   "Chín ngay 1 ô",         "avocado",    0, "", "instant"),
-            new ShopItem("g3", "Bùa đột biến",       "+30% đột biến 10 phút", "watermelon", 0, "", "mutate"),
-            new ShopItem("g4", "Túi hạt ngẫu nhiên", "×5 hạt giống",          "pineapple",  0, "", "seedbag"),
-            new ShopItem("g5", "Năng lượng thần kỳ", "+300 năng lượng",       "banana",     0, "", "energy"),
-            new ShopItem("g7", "Dự báo thời tiết",   "Xem trước 12 giờ",      "lemon",      0, "", "forecast"),
-            new ShopItem("g8", "Đổi đơn hàng",       "Làm mới 1 đơn",         "radish",     0, "", "reroll"),
-            new ShopItem("g9", "Nhà kính",           "6 lần gieo né thời tiết xấu", "cauliflower", 0, "", "green"),
+            new ShopItem("g1", "Bình tưới vàng",     "Tưới hết, bỏ qua cữ",   "item_can",   0, "", "water3"),
+            new ShopItem("g2", "Phân bón thần kỳ",   "Chín ngay 1 ô",         "item_fert",  0, "", "instant"),
+            new ShopItem("g3", "Bùa đột biến",       "+30% đột biến 10 phút", "item_charm", 0, "", "mutate"),
+            new ShopItem("g4", "Túi hạt ngẫu nhiên", "×5 hạt giống",          "item_seedbag", 0, "", "seedbag"),
+            new ShopItem("g5", "Năng lượng thần kỳ", "Đầy thanh, ra 1 rương", "item_energy", 0, "", "energy"),
+            new ShopItem("g7", "Dự báo thời tiết",   "Dự báo suốt 12 giờ", "item_forecast", 0, "", "forecast"),
+            new ShopItem("g8", "Đổi đơn hàng",       "Làm mới 1 đơn",         "item_reroll", 0, "", "reroll"),
+            new ShopItem("g9", "Nhà kính",           "6 lần gieo né thời tiết xấu", "item_green", 0, "", "green"),
+            new ShopItem("g10", "Bùa kinh nghiệm",   "×2 XP thu hoạch 10 phút", "item_xpcharm", 0, "", "xp2"),
+            new ShopItem("g11", "Thuốc lớn nhanh",   "Cả đảo chín nhanh 50%", "item_tonic", 0, "", "tonic"),
+            new ShopItem("g12", "Rương quý",         "Mở ra vật phẩm quý",    "item_chest", 0, "", "chest"),
+            new ShopItem("g13", "Túi hạt quý",       "×3 hạt cây xịn nhất",   "item_seedgold", 0, "", "seedbest"),
         };
 
         public static readonly Friend[] Friends =

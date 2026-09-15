@@ -100,14 +100,18 @@ namespace LQFarm
         }
 
         /// <summary>Move a transform along an arc to a target, then destroy it.</summary>
-        public static void FlyArc(RectTransform node, Vector2 from, Vector2 to, float time, float lift, Action onArrive = null)
+        public static void FlyArc(RectTransform node, Vector2 from, Vector2 to, float time, float lift, Action onArrive = null,
+                                  float delay = -1f)
         {
-            I.StartCoroutine(FlyRoutine(node, from, to, time, lift, onArrive));
+            I.StartCoroutine(FlyRoutine(node, from, to, time, lift, onArrive, delay));
         }
 
-        static IEnumerator FlyRoutine(RectTransform node, Vector2 from, Vector2 to, float time, float lift, Action onArrive)
+        /// <param name="delay">Negative picks a small random delay, so a handful of simultaneous
+        /// arcs do not move in lockstep. A sweep passes an explicit one to stagger them in order.</param>
+        static IEnumerator FlyRoutine(RectTransform node, Vector2 from, Vector2 to, float time, float lift, Action onArrive, float delay)
         {
-            float delay = UnityEngine.Random.Range(0f, 0.12f);
+            if (delay < 0f) delay = UnityEngine.Random.Range(0f, 0.12f);
+            if (delay > 0f && node != null) node.localScale = Vector3.zero;
             yield return new WaitForSecondsRealtime(delay);
             for (float e = 0; e < time; e += Time.unscaledDeltaTime)
             {
@@ -153,14 +157,16 @@ namespace LQFarm
 
         static IEnumerator StaggerRoutine(Transform parent, float step)
         {
+            if (parent == null) yield break;
             for (int i = 0; i < parent.childCount; i++)
             {
                 var c = parent.GetChild(i);
                 c.localScale = Vector3.zero;
             }
-            for (int i = 0; i < parent.childCount; i++)
+            // The container can be destroyed between two steps (a reward card closed by a quick
+            // tap): check it BEFORE the loop condition reads childCount, not after.
+            for (int i = 0; parent != null && i < parent.childCount; i++)
             {
-                if (parent == null) yield break;
                 PopIn(parent.GetChild(i), 0.26f, 0.4f);
                 yield return new WaitForSecondsRealtime(step);
             }
@@ -216,20 +222,52 @@ namespace LQFarm
     /// <summary>Number and duration formatting, Vietnamese style.</summary>
     public static class Fmt
     {
-        static readonly System.Globalization.CultureInfo Vi = new System.Globalization.CultureInfo("vi-VN");
+        /// <summary>Vietnamese number style — "." between thousands, "," before decimals — built by
+        /// hand rather than taken from the "vi-VN" culture. Culture tables are platform data: on an
+        /// IL2CPP phone build a missing or trimmed table throws inside this static initialiser, and
+        /// then EVERY number in the game fails to format. This cannot be missing.</summary>
+        public static readonly System.Globalization.NumberFormatInfo Vi = new System.Globalization.NumberFormatInfo
+        {
+            NumberGroupSeparator = ".", NumberDecimalSeparator = ",", NumberGroupSizes = new[] { 3 },
+            PercentGroupSeparator = ".", PercentDecimalSeparator = ",",
+        };
+
+        /// <summary>A multiplier as the HUD writes it: ×1,35 without trailing zeros.</summary>
+        public static string Mul(float v) { return v.ToString("0.##", Vi); }
 
         public static string N(long n)  { return n.ToString("#,0", Vi); }
         public static string N(int n)   { return n.ToString("#,0", Vi); }
+
+        /// <summary>Big amounts in words for tight spots (the HUD coin chip, a reward cell):
+        /// 22.000.000.000 → "22 tỷ", 1.290.000 → "1,29 tr". Below ten million it is the full number.</summary>
+        public static string Short(long n)
+        {
+            long a = n < 0 ? -n : n;
+            if (a >= 1_000_000_000L) return (n / 1_000_000_000.0).ToString("0.##", Vi) + " tỷ";
+            if (a >= 10_000_000L) return (n / 1_000_000.0).ToString("0.#", Vi) + " tr";
+            return N(n);
+        }
         /// <summary>Vietnamese decimal comma, trailing zeros dropped: 16%, 25,2%. The old
         /// "0.00" used the DEVICE culture, so one build printed 16.00% here and 16,00% on a
         /// Vietnamese phone, next to "×1,35" elsewhere on the same screen.</summary>
         public static string Pct(float v) { return (v * 100f).ToString("0.#", Vi) + "%"; }
 
-        /// <summary>Countdown text: 1g 20p / 3p 05s / 42s.</summary>
+        /// <summary>A duration or countdown: 24g / 2g 30p / 1g 5p / 20p / 3p 05s / 42s. A zero tail is
+        /// dropped — crops now run from two minutes to a day, and "24g 0p" or "20p 00s" on a seed card
+        /// read like a timer stuck at zero.</summary>
         public static string Time(int sec)
         {
-            if (sec >= 3600) return (sec / 3600) + "g " + ((sec % 3600) / 60) + "p";
-            if (sec >= 60)   return (sec / 60) + "p " + (sec % 60).ToString("00") + "s";
+            if (sec < 0) sec = 0;
+            if (sec >= 3600)
+            {
+                int m = (sec % 3600) / 60;
+                return (sec / 3600) + "g" + (m > 0 ? " " + m + "p" : "");
+            }
+            if (sec >= 60)
+            {
+                int s = sec % 60;
+                return (sec / 60) + "p" + (s > 0 ? " " + s.ToString("00") + "s" : "");
+            }
             return sec + "s";
         }
     }

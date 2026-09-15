@@ -72,8 +72,10 @@ namespace LQFarm
         /// <summary>A solid rounded rectangle.</summary>
         public static Image Round(Transform parent, Color color, int radius = 20, string name = "round")
         {
-            var im = Img(parent, Theme.Round(radius), color, name);
-            im.type = Image.Type.Sliced;
+            // A true radius at any size (see Chrome.Shape) — the old quantised 1x plates were
+            // softened by every 1.5x screen and snapped 20 and 22 to the same 18.
+            var im = Img(parent, null, color, name);
+            Chrome.Shape(im, radius);
             return im;
         }
 
@@ -82,13 +84,7 @@ namespace LQFarm
                                  float shadow = 0.30f, float drop = 8f)
         {
             var holder = Node(name, parent);
-            var sh = Img(holder, Theme.Shadow(radius, 18), new Color(0, 0, 0, shadow), "shadow");
-            sh.type = Image.Type.Sliced;
-            sh.rectTransform.Stretch(-14, -14 + drop, -14, -14 - drop);
-            var im = Img(holder, Theme.Skin.Panel, Color.white, "bg");
-            im.type = Image.Type.Sliced;
-            im.rectTransform.Stretch();
-            return im;
+            return SurfaceLook.Add(holder, Looks.Paper, radius).Fill;
         }
 
         public static Text Label(Transform parent, string text, int size, Color color,
@@ -96,12 +92,13 @@ namespace LQFarm
         {
             var rt = Node("label", parent);
             var t = rt.gameObject.AddComponent<Text>();
-            t.font = Theme.Font;
+            // The weight lives in the font file, never in fontStyle — see Theme.FontFor.
+            t.font = Theme.FontFor(style, size);
             t.text = text;
             t.fontSize = size;
             t.color = color;
             t.alignment = anchor;
-            t.fontStyle = style;
+            t.fontStyle = FontStyle.Normal;
             t.horizontalOverflow = HorizontalWrapMode.Overflow;
             t.verticalOverflow = VerticalWrapMode.Overflow;
             t.raycastTarget = false;
@@ -109,68 +106,68 @@ namespace LQFarm
             return t;
         }
 
-        /// <summary>Label lifted off artwork by a drop shadow. Deliberately a Shadow and not
-        /// an Outline: Outline emits the glyph mesh five times, Shadow twice, and these
-        /// labels are the most numerous thing on screen.</summary>
+        /// <summary>White lettering on glass or artwork, with an outline in the surface's own dark
+        /// tone (<paramref name="line"/>, default the HUD glass ink).
+        ///
+        /// It was a 60% black drop shadow. On a heavy rounded face a black shadow reads as dirt
+        /// under the letters; an outline in the colour of what the text sits on reads as the
+        /// letters being cut out of it. Outline costs five copies of the glyph mesh against
+        /// Shadow's two, which the HUD's few dozen short labels can afford.</summary>
         public static Text LabelOutlined(Transform parent, string text, int size, Color color,
-                                         TextAnchor anchor = TextAnchor.MiddleCenter)
+                                         TextAnchor anchor = TextAnchor.MiddleCenter, Color? line = null)
         {
             var t = Label(parent, text, size, color, anchor, FontStyle.Bold);
-            var o = t.gameObject.AddComponent<Shadow>();
-            o.effectColor = new Color(0f, 0f, 0f, 0.6f);
+            var o = t.gameObject.AddComponent<Outline>();
+            o.effectColor = line ?? Theme.GlassInk.Alpha(0.92f);
             o.effectDistance = new Vector2(1.5f, -1.5f);
             return t;
         }
 
         // ---------------- buttons ----------------
-        /// <summary>Chunky rounded button with a darker lip and a press bounce.</summary>
+        /// <summary>M6 button: gradient face, white rim, dark edge and a 6 px lip the face sinks
+        /// into while held. <paramref name="lip"/> and <paramref name="radius"/> are kept for the
+        /// call sites and ignored — the tone decides the dark colour, and the radius follows the
+        /// button rule (18 once the face is 60 tall, a pill below that) so no two buttons on a
+        /// screen disagree about their corners.</summary>
         public static Button Btn(Transform parent, string text, Color face, Color lip, int size = 26,
                                  int radius = 18, Action onClick = null)
         {
             var root = Node("btn", parent);
+            var look = Looks.Button(Theme.Skin.ToneOf(face));
+            var surf = SurfaceLook.Add(root, look, SurfaceLook.Auto, pressable: true);
+            surf.RaycastBody();
 
-            var im = Img(root, Theme.Skin.Button(Theme.Skin.ToneOf(face)), Color.white, "face");
-            im.type = Image.Type.Sliced;
-            im.raycastTarget = true;
-            im.rectTransform.Stretch();
+            // Capped at 26: the old 28 px labels ran into the lip on 58 px buttons.
+            var label = Label(surf.Face, text, Mathf.Min(size, 26), look.ink, TextAnchor.MiddleCenter, FontStyle.Bold);
+            label.rectTransform.Stretch(14, 0, 14, 2);
+            var o = label.gameObject.AddComponent<Outline>();
+            o.effectColor = look.inkLine;
+            o.effectDistance = new Vector2(1.5f, -1.5f);
 
-            // the sprite carries a depth lip along the bottom, so the label sits slightly high
-            var label = Label(im.transform, text, size, InkFor(face), TextAnchor.MiddleCenter, FontStyle.Bold);
-            label.rectTransform.Stretch(10, 0, 10, 8);
-            var sh = label.gameObject.AddComponent<Shadow>();
-            sh.effectColor = new Color(0f, 0f, 0f, label.color == Color.white ? 0.45f : 0.18f);
-            sh.effectDistance = new Vector2(1f, -1f);
-
-            var b = root.gameObject.AddComponent<Button>();
-            b.targetGraphic = im;
-            var colors = b.colors;
-            colors.highlightedColor = new Color(1.05f, 1.05f, 1.05f, 1f);
-            colors.pressedColor = new Color(0.88f, 0.88f, 0.88f, 1f);
-            colors.disabledColor = new Color(0.7f, 0.7f, 0.7f, 0.8f);
-            colors.fadeDuration = 0.06f;
-            b.colors = colors;
+            var b = root.gameObject.AddComponent<SkinButton>();
+            b.transition = Selectable.Transition.None;
+            b.targetGraphic = surf.Fill;
+            b.Bind(surf, look, Looks.BtnOff, label);
+            b.onClick.AddListener(() => Sfx.Play(SfxId.Tap));
             if (onClick != null) b.onClick.AddListener(() => onClick());
             root.gameObject.AddComponent<PressFx>();
             return b;
         }
 
-        /// <summary>White lettering vanishes on the amber and grey buttons; those get dark ink.</summary>
+        /// <summary>Every button face now carries white lettering; only the cream grey does not.</summary>
         public static Color InkFor(Color face)
         {
-            var tone = Theme.Skin.ToneOf(face);
-            return (tone == Theme.Tone.Amber || tone == Theme.Tone.Grey) ? Theme.Ink : Color.white;
+            return Theme.Skin.ToneOf(face) == Theme.Tone.Grey ? Theme.Ink : Color.white;
         }
 
-        /// <summary>Swaps a button to another tone — used when a button turns available or not.</summary>
+        /// <summary>Swaps a button to another tone — used when a button turns available or not.
+        /// The grey tone IS the unavailable look, so a call site that restyles to Cream3 with
+        /// soft ink gets the same face as a disabled button; <paramref name="labelColor"/> is
+        /// ignored because every face is lettered white with an outline in its own dark.</summary>
         public static void Restyle(Button b, Color tone, Color? labelColor = null)
         {
             if (b == null) return;
-            var face = b.transform.Find("face")?.GetComponent<Image>();
-            if (face != null)
-            {
-                face.sprite = Theme.Skin.Button(Theme.Skin.ToneOf(tone));
-                face.color = Color.white;
-            }
+            if (b is SkinButton sb) { sb.SetNormal(Looks.Button(Theme.Skin.ToneOf(tone))); return; }
             var lab = BtnLabel(b);
             if (lab != null) lab.color = labelColor ?? InkFor(tone);
         }
@@ -187,17 +184,22 @@ namespace LQFarm
         public static Button IconBtn(Transform parent, Sprite icon, Color face, float iconScale = 0.62f,
                                      Action onClick = null, string caption = null, Color? iconTint = null)
         {
+            // The same M6 material as the text buttons, as a disc: gradient face, white rim, dark
+            // edge and a lip the face sinks into. It was the Kenney round skin, the last surface in
+            // the game that did not belong to the material system.
             var root = Node("iconbtn", parent);
-            var sh = Img(root, Theme.Circle(), new Color(0, 0, 0, 0.25f), "shadow");
-            sh.rectTransform.Stretch(-2, 0, -2, -6);
-            var circle = Img(root, Theme.Skin.Round(Theme.Skin.ToneOf(face)), Color.white, "face");
-            circle.rectTransform.Stretch();
-            circle.preserveAspect = true;
-            circle.raycastTarget = true;
+            var tone = Theme.Skin.ToneOf(face);
+            var look = tone == Theme.Tone.Grey ? Looks.BtnCream : Looks.Button(tone);
+            look.lip = 4f;
+            var surf = SurfaceLook.Add(root, look, SurfaceLook.Pill, pressable: true);
+            surf.RaycastBody();
+            var circle = surf.Fill;
 
+            Image iconImg = null;
             if (icon != null)
             {
-                var ic = Img(circle.transform, icon, iconTint ?? Color.white, "icon");
+                var ic = Img(surf.Face, icon, iconTint ?? Color.white, "icon");
+                iconImg = ic;
                 ic.preserveAspect = true;
                 ic.rectTransform.anchorMin = ic.rectTransform.anchorMax = Center;
                 ic.rectTransform.pivot = Center;
@@ -210,18 +212,67 @@ namespace LQFarm
             {
                 // white lettering straight on the sky was unreadable; give it a dark plate
                 var plate = Node("cap", root);
-                plate.Anchor(Bottom, new Vector2(0, -20), new Vector2(112, 26));
-                var plateBg = Round(plate, new Color(0.07f, 0.15f, 0.12f, 0.66f), 12, "bg");
-                plateBg.rectTransform.Stretch();
+                plate.Anchor(Bottom, new Vector2(0, -20), new Vector2(112, 28));
+                SurfaceLook.Add(plate, Looks.Glass);
                 var cap = Label(plate, caption, 17, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold);
                 cap.rectTransform.Stretch(4, 0, 4, 0);
             }
 
-            var b = root.gameObject.AddComponent<Button>();
+            var b = root.gameObject.AddComponent<SkinButton>();
+            b.transition = Selectable.Transition.None;
             b.targetGraphic = circle;
+            // disabled keeps the face's own colour and fades the glyph: an arrow at the end of
+            // the island row should look unavailable, not like a different button
+            var off = look;
+            off.top = Color.Lerp(look.top, Looks.BtnOff.top, 0.6f);
+            off.bottom = Color.Lerp(look.bottom, Looks.BtnOff.bottom, 0.6f);
+            b.Bind(surf, look, off, null);
+            b.icon = iconImg;
+            b.onClick.AddListener(() => Sfx.Play(SfxId.Tap));
             if (onClick != null) b.onClick.AddListener(() => onClick());
             root.gameObject.AddComponent<PressFx>();
             return b;
+        }
+
+        /// <summary>A one-line text field in a recessed well: dark ink, grey placeholder. The caller
+        /// places the returned field's RectTransform. <paramref name="onSubmit"/> runs on Enter /
+        /// the mobile keyboard's Done, not when the field merely loses focus.</summary>
+        public static InputField TextField(Transform parent, string placeholder, InputField.ContentType type,
+                                           int size = 22, Action onSubmit = null)
+        {
+            var box = Node("field", parent);
+            SurfaceLook.Add(box, Looks.Well, 18f);
+            var hit = box.gameObject.AddComponent<Image>();
+            hit.color = new Color(1f, 1f, 1f, 0.001f);
+
+            var text = Label(box, "", size, Theme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
+            text.supportRichText = false;
+            text.rectTransform.Stretch(20, 0, 20, 2);
+            var ph = Label(box, placeholder, size - 2, Theme.InkSoft.Alpha(0.55f), TextAnchor.MiddleLeft);
+            ph.rectTransform.Stretch(20, 0, 20, 2);
+
+            var f = box.gameObject.AddComponent<InputField>();
+            f.targetGraphic = hit;
+            f.textComponent = text;
+            f.placeholder = ph;
+            f.characterLimit = 120;
+            f.lineType = InputField.LineType.SingleLine;
+            f.contentType = type;
+            f.caretColor = Theme.Ink;
+            f.customCaretColor = true;
+            f.caretWidth = 2;
+            f.selectionColor = Theme.Green.Alpha(0.35f);
+            f.shouldHideMobileInput = false;
+            if (onSubmit != null)
+                f.onEndEdit.AddListener(_ =>
+                {
+#if ENABLE_INPUT_SYSTEM
+                    var kb = UnityEngine.InputSystem.Keyboard.current;
+                    if (kb != null && (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame)) { onSubmit(); return; }
+#endif
+                    if (f.touchScreenKeyboard != null && f.touchScreenKeyboard.status == TouchScreenKeyboard.Status.Done) onSubmit();
+                });
+            return f;
         }
 
         /// <summary>Invisible full-rect button, for tapping artwork.</summary>
@@ -245,25 +296,31 @@ namespace LQFarm
             return Mathf.Abs(a.r - b.r) < 0.03f && Mathf.Abs(a.g - b.g) < 0.03f && Mathf.Abs(a.b - b.b) < 0.03f;
         }
 
+        /// <summary>A recessed pill track with a gradient pill fill. Callers drive it by setting
+        /// <c>fillAmount</c> on the returned image, as before; <see cref="BarDriver"/> turns that
+        /// into a LENGTH so both ends stay round (Filled images ignore 9-slicing).</summary>
         public static Image Bar(Transform parent, Color track, Color fill, int radius = 10)
         {
-            var bg = Img(parent, Theme.Skin.BarTrack, track, "bar");
-            bg.type = Image.Type.Sliced;
-            // Only green and blue have painted bar sprites. Everything else used to snap to the
-            // nearest of those or to plain white — purple energy drew blue, amber milestones and
-            // the gold/bronze contract grades drew white. Other colours now tint the white bar.
-            bool painted = Near(fill, Theme.Green) || Near(fill, Theme.Blue);
-            var f = Img(bg.transform, painted ? Theme.Skin.BarFor(fill) : Theme.Skin.BarWhite,
-                        painted ? Color.white : fill, "fill");
+            var root = Node("bar", parent);
+            // TrackGlass (white 22%) was a pale stripe that washed the fill out on the HUD; a bar
+            // on glass is a dark groove now. Cream panels keep the brown track they pass in.
+            bool onGlass = track.r > 0.9f && track.g > 0.9f && track.a < 0.5f;
+            Color tTop = onGlass ? new Color(0f, 0.05f, 0.05f, 0.42f) : track;
+            Color tBot = onGlass ? new Color(0f, 0.05f, 0.05f, 0.30f) : track.Alpha(track.a * 0.75f);
+            SurfaceLook.Add(root, new Look
+            {
+                top = tTop, bottom = tBot,
+                edge = new Color(0f, 0f, 0f, onGlass ? 0.30f : 0.22f), edgeW = 0f, inTop = 1.5f,
+            });
+
+            // Green gets the designer's own ramp; any other colour keeps its hue and darkens
+            // toward the bottom, with the top 40% held flat and bright — the gloss.
+            bool green = Near(fill, Theme.Green);
+            var f = Img(root, null, green ? Theme.Hex("#79E08D") : fill, "fill");
             f.type = Image.Type.Sliced;
-            f.rectTransform.anchorMin = new Vector2(0, 0);
-            f.rectTransform.anchorMax = new Vector2(1, 1);
-            f.rectTransform.offsetMin = new Vector2(2, 2);
-            f.rectTransform.offsetMax = new Vector2(-2, -2);
-            f.type = Image.Type.Filled;
-            f.fillMethod = Image.FillMethod.Horizontal;
-            f.fillOrigin = 0;
+            f.gameObject.AddComponent<VGradient>().Set(Color.white, new Color(0.70f, 0.72f, 0.70f, 1f), 0f, 0.6f);
             f.fillAmount = 0.5f;
+            f.gameObject.AddComponent<BarDriver>();
             return f;
         }
 
@@ -273,36 +330,54 @@ namespace LQFarm
         {
             var root = Node("chip", parent);
             root.sizeDelta = new Vector2(width, 52);
-            var bg = Round(root, face, 26, "bg");
-            bg.rectTransform.Stretch();
-            var stroke = Img(root, Theme.Round(26), new Color(1, 1, 1, 0.22f), "stroke");
-            stroke.type = Image.Type.Sliced;
-            stroke.rectTransform.Stretch(2, 2, 2, 2);
+            // M2. The old "stroke" was a SOLID white 22% plate laid over the whole chip, not a
+            // ring — it is why the coin chip was grey (#84929C) next to the teal season bar.
+            SurfaceLook.Add(root, Looks.Glass);
 
-            // Anchor(Left) puts the LEFT EDGE at x, not the centre (see CLAUDE.md), so the old
-            // icon at x=26 spanned 26..70 while the value started at 52 — every balance was
-            // printed across the coin. The icon now ends at 50 and the value starts after it.
+            // The icon overhangs the left cap by 6 px and is concentric with it, so it reads as a
+            // token pinned to the pill rather than a glyph printed inside it.
             if (icon != null)
             {
                 var holder = Node("ic", root);
-                holder.Anchor(Left, new Vector2(8, 0), new Vector2(42, 42));
+                holder.Anchor(Left, new Vector2(-6, 0), new Vector2(56, 56));
                 var ic = Img(holder, icon, Color.white, "icon");
                 ic.preserveAspect = true;
                 ic.rectTransform.Stretch(2, 2, 2, 2);
             }
 
             var t = LabelOutlined(root, value, 24, Color.white, TextAnchor.MiddleRight);
-            t.rectTransform.Stretch(icon != null ? 54 : 16, 0, onPlus != null ? 46 : 16, 0);
+            t.rectTransform.Stretch(icon != null ? 56 : 18, 0, onPlus != null ? 54 : 18, 0);
 
             if (onPlus != null)
             {
+                // 44 inside a 52 pill, 4 px from the end: concentric with the right cap.
                 var plus = Node("plus", root);
-                plus.Anchor(Right, new Vector2(-4, 0), new Vector2(40, 40));
-                var pb = IconBtn(plus, null, Theme.Green, 0.6f, onPlus);
+                plus.Anchor(Right, new Vector2(-4, 0), new Vector2(44, 44));
+                var pb = PlusBtn(plus, onPlus);
                 pb.GetComponent<RectTransform>().Stretch();
-                LabelOutlined(pb.transform, "+", 30, Color.white).rectTransform.Stretch(0, 0, 0, 4);
             }
             return t;
+        }
+
+        /// <summary>The small round "+" that tops up a currency: a lipless M6 green disc.</summary>
+        public static Button PlusBtn(Transform parent, Action onClick)
+        {
+            var root = Node("plusBtn", parent);
+            var look = Looks.BtnGreen;
+            look.lip = 3f;
+            look.lipColor = Theme.Hex("#1C7439");
+            look.shadow = Color.clear;
+            var surf = SurfaceLook.Add(root, look, SurfaceLook.Pill, pressable: true);
+            surf.RaycastBody();
+            var lab = LabelOutlined(surf.Face, "+", 30, Color.white, TextAnchor.MiddleCenter, look.inkLine);
+            lab.rectTransform.Stretch(0, 0, 0, 3);
+            var b = root.gameObject.AddComponent<SkinButton>();
+            b.transition = Selectable.Transition.None;
+            b.targetGraphic = surf.Fill;
+            b.Bind(surf, look, Looks.BtnOff, null);
+            if (onClick != null) b.onClick.AddListener(() => onClick());
+            root.gameObject.AddComponent<PressFx>();
+            return b;
         }
 
         /// <summary>A vertical scroll view. Returns the content transform (already has a VerticalLayoutGroup).</summary>
@@ -367,30 +442,48 @@ namespace LQFarm
         public static Action<int> Tabs(Transform parent, string[] names, Action<int> onPick,
                                        float w = 150f, float h = 46f, float gap = 10f)
         {
+            // A segmented control: one recessed M5 track, the selected segment a raised green
+            // pill inside it. Separate cream lozenges with gaps read as three unrelated buttons.
+            const float pad = 4f;
             var root = Node("tabs", parent);
             root.sizeDelta = new Vector2(names.Length * w + (names.Length - 1) * gap, h);
-            var faces = new List<Image>();
+            SurfaceLook.Add(root, Looks.Well);
+            var faces = new List<GameObject>();
             var labels = new List<Text>();
+            float seg = (root.sizeDelta.x - pad * 2f) / names.Length;
+
+            var pillLook = Looks.BtnGreen;
+            pillLook.lip = 3f;
+            pillLook.shadow = new Color(0f, 0f, 0f, 0.18f);
+            pillLook.blur = 4f;
+            pillLook.drop = new Vector2(0f, -1f);
 
             for (int i = 0; i < names.Length; i++)
             {
                 int idx = i;
                 var cell = Node("tab", root);
-                cell.anchorMin = cell.anchorMax = cell.pivot = Left;
-                cell.anchoredPosition = new Vector2(i * (w + gap) + w / 2f, 0);
-                cell.sizeDelta = new Vector2(w, h);
+                // Anchor(Left) makes x the LEFT edge. The old "+ w / 2" pushed every tab row half
+                // a tab to the right of where its caller centred it.
+                cell.Anchor(Left, new Vector2(pad + i * seg, 0), new Vector2(seg, h - pad * 2f));
 
-                var face = Round(cell, Theme.Cream3, 22, "face");
-                face.rectTransform.Stretch();
-                face.raycastTarget = true;
-                var lab = Label(cell, names[i], 22, Theme.InkSoft, TextAnchor.MiddleCenter, FontStyle.Bold);
-                lab.rectTransform.Stretch();
+                var faceNode = Node("face", cell);
+                faceNode.Stretch();
+                SurfaceLook.Add(faceNode, pillLook, SurfaceLook.Pill);
+
+                var hit = cell.gameObject.AddComponent<Image>();
+                hit.color = new Color(0, 0, 0, 0);
+                var lab = Label(cell, names[i], Mathf.Min(22, (int)h / 2), Theme.InkSoft, TextAnchor.MiddleCenter, FontStyle.Bold);
+                lab.rectTransform.Stretch(4, 0, 4, 3);
+                var o = lab.gameObject.AddComponent<Outline>();
+                o.effectColor = Theme.Hex("#1C7439");
+                o.effectDistance = new Vector2(1.5f, -1.5f);
 
                 var b = cell.gameObject.AddComponent<Button>();
-                b.targetGraphic = face;
-                b.onClick.AddListener(() => onPick(idx));
+                b.targetGraphic = hit;
+                b.transition = Selectable.Transition.None;
+                b.onClick.AddListener(() => { Sfx.Play(SfxId.Tab); onPick(idx); });
                 cell.gameObject.AddComponent<PressFx>();
-                faces.Add(face);
+                faces.Add(faceNode.gameObject);
                 labels.Add(lab);
             }
 
@@ -399,8 +492,9 @@ namespace LQFarm
                 for (int i = 0; i < faces.Count; i++)
                 {
                     bool on = i == sel;
-                    faces[i].color = on ? Theme.GreenDeep : Theme.Cream3;
-                    labels[i].color = on ? Color.white : Theme.InkSoft;
+                    faces[i].SetActive(on);
+                    labels[i].color = on ? Color.white : Theme.Hex("#8A7152");
+                    labels[i].GetComponent<Outline>().enabled = on;
                 }
             };
             setActive(0);

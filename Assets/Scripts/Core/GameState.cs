@@ -17,6 +17,11 @@ namespace LQFarm
     public class Plot
     {
         public bool locked = true;
+
+        /// <summary>From the island's layout (<see cref="IslandSys.KindOf"/>), set on every load:
+        /// a big plot takes only big crops; a slot that is not land at all (the river on Đảo Nước,
+        /// the cells a big plot covers) stays locked and is never drawn, bought or planted.</summary>
+        public bool big, none;
         public string crop;
 
         /// <summary>Unix ms UTC. Absolute, so growth needs no offline catch-up pass — elapsed
@@ -41,6 +46,12 @@ namespace LQFarm
         /// <summary>How many windows this crop was planted with. Frozen so a balance change
         /// never rewrites a crop that is already in the ground.</summary>
         public byte windowCount;
+
+        /// <summary>Seconds one watering takes off this crop (the seed's <c>waterCut</c>), frozen at
+        /// plant for the same reason, before drought doubles it. 0 on a plot planted before watering
+        /// became per-crop (2026-09-15): that crop finishes under the old rule, 20% of its duration
+        /// split across its windows — see <see cref="WaterSys.BaseCut"/>.</summary>
+        public float waterSec;
 
         public int variant;
 
@@ -111,6 +122,8 @@ namespace LQFarm
     public class Stats
     {
         public int harvest, plant, water, sell, chest, visit, mutate;
+        /// <summary>Plots watered or harvested by a pet.</summary>
+        public int petJobs;
     }
 
     /// <summary>Wall-clock state that has to survive a restart.
@@ -187,6 +200,9 @@ namespace LQFarm
         {
             var s = Local;
             SaveIO.Load(s);
+            // Whatever Load decided — the file, a new game, or a refused file set aside — this is
+            // now the state the player is meant to have, so it may be written.
+            s.loaded = true;
 
             s.EnsureWorldSeed();
             s.PruneUnknown();
@@ -206,12 +222,16 @@ namespace LQFarm
         {
             s.CheckDay();
             s.SyncContracts();
+            // the rain kept watering while the app was closed
+            foreach (var isl in s.islands)
+                foreach (var p in isl.plots) WaterSys.RainWater(s, p, catchUp: true);
         }
 
         public static void Reset()
         {
             SaveIO.Delete();
             Local.NewGame();
+            Local.loaded = true;
         }
     }
 }

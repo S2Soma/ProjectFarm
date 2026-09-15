@@ -1,0 +1,9 @@
+<!--
+  IL2CPP builds strip code that nothing references directly. The save file is read by
+  Newtonsoft through reflection — DTO constructors, fields and generic collections of
+  game types are only ever touched that way — so the game's own assembly is kept whole.
+  It is small; a stripped save reader that silently loads every player as a new game is not.
+-->
+<linker>
+  <assembly fullname="Assembly-CSharp" preserve="all" />
+</linker>

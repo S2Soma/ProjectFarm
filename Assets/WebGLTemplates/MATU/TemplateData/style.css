@@ -1,0 +1,135 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #3e9fe0;
+  font-family: "Baloo 2", "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+}
+
+#unity-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: linear-gradient(#3e9fe0, #ddf3fd);
+  outline: none;
+}
+
+/* ---- loading: the start screen's sky, the app icon, a green pill bar ---- */
+#loading {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background:
+    radial-gradient(ellipse 60% 45% at 50% 108%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 70%),
+    linear-gradient(#3e9fe0 0%, #7fccef 55%, #ddf3fd 100%);
+  transition: opacity 0.45s ease;
+}
+#loading.done { opacity: 0; pointer-events: none; }
+
+#loading-icon {
+  width: min(22vmin, 150px);
+  height: auto;
+  border-radius: 24%;
+  box-shadow: 0 10px 30px rgba(20, 60, 110, 0.35);
+  animation: bob 2.4s ease-in-out infinite;
+}
+@keyframes bob { 50% { transform: translateY(-8px); } }
+
+#loading-title {
+  margin-top: 6px;
+  font-size: min(9vmin, 58px);
+  font-weight: 800;
+  color: #ffd45a;
+  -webkit-text-stroke: 2px #8a4a0c;
+  text-shadow: 0 5px 0 rgba(20, 50, 90, 0.28);
+  letter-spacing: 0.5px;
+}
+#loading-sub {
+  font-size: min(3.6vmin, 20px);
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(#5ccf7b, #2f9a55);
+  border: 2px solid #1f7040;
+  border-radius: 999px;
+  padding: 2px 16px 3px;
+}
+
+#bar {
+  width: min(60vmin, 360px);
+  height: 18px;
+  margin-top: 14px;
+  border-radius: 999px;
+  background: rgba(20, 60, 90, 0.25);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+#bar-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(#7fe39a, #2fa956);
+  transition: width 0.25s ease;
+}
+#loading-note {
+  font-size: min(3.4vmin, 17px);
+  font-weight: 600;
+  color: #2a5a7a;
+}
+
+/* ---- phones held upright ---- */
+#rotate {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: linear-gradient(#3e9fe0, #7fccef);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  padding: 24px;
+  z-index: 10;
+}
+.rotate-phone {
+  width: 54px;
+  height: 90px;
+  border: 5px solid #fff;
+  border-radius: 12px;
+  animation: turn 1.8s ease-in-out infinite;
+}
+@keyframes turn { 0%, 30% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
+@media (orientation: portrait) {
+  body.mobile #rotate { display: flex; }
+}
+
+#error {
+  position: absolute;
+  left: 50%;
+  top: 16px;
+  transform: translateX(-50%);
+  max-width: 90%;
+  background: #b03a31;
+  color: #fff;
+  font-weight: 700;
+  padding: 10px 16px;
+  border-radius: 12px;
+  z-index: 20;
+}

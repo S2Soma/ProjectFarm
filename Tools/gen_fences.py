@@ -50,3 +50,27 @@ for name, ((xl, yl), (xr, yr)) in SPECS.items():
     Hn = out.shape[0]
     print(f"{name}_iso {W}x{Hn}  left base {bl[0]:.1f},{bl[1]:.1f}  right base {br[0]:.1f},{br[1]:.1f}"
           f"  pivot ({bl[0]/W:.4f}, {1 - bl[1]/Hn:.4f})  step ({br[0]-bl[0]:.1f}, {-(br[1]-bl[1]):.1f})")
+
+
+# ---------------------------------------------------------------------------------------------
+# Pieces: one post, one rail span, one lantern gate post.
+#
+# Chaining whole segments put a post at BOTH ends of every segment, and the two posts that met at
+# each joint were never quite on top of each other — the fence read as a row of doubled posts.
+# IslandView now places exactly one post per node and a rail between each pair, so a shared post
+# cannot double. Pivots are the post's base centre (for the rail: the base of the post it hangs
+# off, which lies left of the crop — Unity accepts a pivot outside 0..1).
+#
+# Measured on the sheared sprites above by column opacity (see the IslandView constants):
+#   fence_iso       left post centre x 22.5, base row 160; next post +108 x, -55 rows
+#   fence_lamp_iso  right post centre x 115.5, base row 166
+# ---------------------------------------------------------------------------------------------
+def crop(name, x0, x1, out):
+    im = Image.open(os.path.join(OUT, name + ".png"))
+    im.crop((x0, 0, x1, im.height)).save(os.path.join(OUT, out + ".png"))
+    print(f"{out}: cols {x0}..{x1} of {name}, {x1 - x0}x{im.height}")
+
+
+crop("fence_iso", 0, 44, "fence_post")        # pivot (22.5/44, 7/167)
+crop("fence_iso", 42, 114, "fence_rail")      # pivot ((22.5-42)/72, 7/167)
+crop("fence_lamp_iso", 96, 193, "fence_gate") # pivot ((115.5-96)/97, 16/182)

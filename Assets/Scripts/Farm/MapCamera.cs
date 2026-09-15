@@ -52,7 +52,9 @@ namespace LQFarm
         /// Without it the map panned freely between islands but the game never learned which one
         /// the player was now looking at — the pager, the three verbs and the plot popup all
         /// kept acting on the island the swipe started from.</summary>
-        public System.Func<Vector2, Vector2, Vector2?> PageTarget;
+        /// <summary>(camera when the drag began, camera now, release velocity) → where to settle.</summary>
+        public System.Func<Vector2, Vector2, Vector2, Vector2?> PageTarget;
+        Vector2 _dragStartCam;
 
         /// <summary>A tap on the map that did not land on a plot, in content units.</summary>
         public System.Action<Vector2> onTap;
@@ -182,6 +184,7 @@ namespace LQFarm
         {
             _panning = true;
             _velocity = Vector2.zero;
+            _dragStartCam = Camera;
             _pointers[e.pointerId] = e.position;
         }
 
@@ -201,6 +204,10 @@ namespace LQFarm
         {
             _pointers.Remove(e.pointerId);
             if (_pointers.Count > 0) return;
+            // PointerUp arrives first and has already settled the camera. Snapping a second time
+            // here, with the velocity spent, re-picked the NEAREST island — which cancelled every
+            // swipe that had not crossed the halfway line: the map lurched and came back.
+            if (!_panning) return;
             _panning = false;
             SnapToNearestLevel();
         }
@@ -266,7 +273,7 @@ namespace LQFarm
             float time = SnapTime;
             if (best >= 0.95f && PageTarget != null)
             {
-                var t = PageTarget(Camera, _velocity);
+                var t = PageTarget(_dragStartCam, Camera, _velocity);
                 if (t.HasValue) { cam = t.Value - new Vector2(0f, InsetBottomPx * 0.5f / Mathf.Max(0.01f, z)); time = PageTime; }
             }
             _velocity = Vector2.zero;

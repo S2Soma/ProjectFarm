@@ -79,10 +79,24 @@ namespace LQFarm.EditorTools
             {
                 var a = ArchipelagoView.IslandOrigin(i - 1);
                 var b = ArchipelagoView.IslandOrigin(i);
-                float gapStart = a.x + 505f, gapEnd = b.x - 505f;
+                float gapStart = a.x + IslandView.BridgeLandX, gapEnd = b.x - IslandView.BridgeLandX;
                 Check(fails, gapEnd - gapStart > 150f, $"cầu {i - 1}→{i} chỉ dài {gapEnd - gapStart:0}");
                 Check(fails, Mathf.Abs(b.y - a.y) < 120f, $"cầu {i - 1}→{i} dốc quá ({b.y - a.y:0})");
             }
+
+            // The bridge's ends must clear the gate lantern, and its deck must fit on the lawn where
+            // it lands — or the cushion sits on the lantern and the deck hangs off the island's tip.
+            float land = IslandView.BridgeLandX;
+            Check(fails, land - IslandView.LanternOuterX >= 8f,
+                  $"cầu cập sát đèn lồng ({land - IslandView.LanternOuterX:0.0} đơn vị)");
+            float deckHalf = ArchipelagoView.BridgeDeckHalf;
+            Check(fails, IslandView.RimDistance(new Vector2(land, deckHalf)) < 0f && IslandView.RimDistance(new Vector2(land, -deckHalf)) < 0f,
+                  "mặt cầu rộng hơn bãi cỏ ở chỗ cập đảo");
+            float postX = land + ArchipelagoView.BridgePostOffset;
+            Check(fails, postX - ArchipelagoView.BridgePostHalfWidth >= IslandView.LanternOuterX, "cọc đầu cầu đè lên đèn lồng cổng");
+            // the corner posts are planted on the lawn, not in the air past the island's tip
+            Check(fails, IslandView.RimDistance(new Vector2(postX, deckHalf + 2f)) < 0f && IslandView.RimDistance(new Vector2(postX, -deckHalf - 2f)) < 0f,
+                  "cọc đầu cầu cắm ra ngoài bãi cỏ");
         }
 
         static void WeatherLooksDiffer(List<string> fails)

@@ -79,6 +79,26 @@ def sunny():
     return img
 
 
+# ------------------------------------------------------------------- moon
+def moon():
+    """A clear night: a crescent and two small stars. The crescent is a disc with a second disc
+    subtracted, so it stays a crescent by silhouette at 26 px."""
+    img = blank(); px = img.load()
+    cx, cy, r = S / 2 - 8, S / 2 + 4, 52
+    ox, oy, orr = cx + 30, cy - 22, 46
+    for y in range(S):
+        for x in range(S):
+            d1 = math.hypot(x + 0.5 - cx, y + 0.5 - cy) - r
+            d2 = orr - math.hypot(x + 0.5 - ox, y + 0.5 - oy)
+            a = min(0.5 - d1, 0.5 - d2)
+            put(px, x, y, a)
+    for sx, sy, sr in ((S / 2 + 54, S / 2 - 50, 13), (S / 2 + 62, S / 2 + 14, 8)):
+        for i in range(4):
+            ang = i * math.pi / 2
+            stroke(px, sx, sy, sx + math.cos(ang) * sr, sy + math.sin(ang) * sr, 3.2)
+    return img
+
+
 # ------------------------------------------------------------------- rain
 def rain():
     img = blank(); px = img.load()
@@ -162,6 +182,7 @@ def drought():
 
 print("vẽ icon thời tiết:")
 save(sunny(), "w_sunny")
+save(moon(), "w_moon")
 save(rain(), "w_rain")
 save(wind(), "w_wind")
 save(snow(), "w_snow")

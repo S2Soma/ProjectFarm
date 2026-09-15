@@ -76,11 +76,34 @@ namespace LQFarm
         }
 
         public static Sprite Farm(string id) { return Load("Art/farm/" + id); }
-        public static Sprite Crop(string id) { return Load("Art/crop/" + id); }
+        /// <summary>Produce icons, and shop items: an "item_" key lives in Art/items, drawn by
+        /// Tools/gen_items.py. The shop used to borrow fruit here — a lime for the watering can.</summary>
+        /// <summary>Anything in Art/items by its file name — chests, medals, the coin.</summary>
+        public static Sprite Item(string id) { return Load("Art/items/" + id); }
+
+        public static Sprite Crop(string id)
+        {
+            if (id != null && id.StartsWith("item_")) return Load("Art/items/" + id);
+            return Load("Art/crop/" + id);
+        }
         public static Sprite Ui(string id)   { return Load("Art/ui/" + id); }
 
         /// <summary>Weather glyphs. Drawn for this project (Tools/gen_weather.py) and kept white
         /// so they can be tinted per weather — tint multiplies, so the art has to be bright.</summary>
+        /// <summary>The glyph for the weather as it looks right now: a clear night (sunny or dry
+        /// weather after dark) shows the moon, not a blazing sun over a starry sky.</summary>
+        public static Sprite WeatherIconNow(Weather w, out Color tint)
+        {
+            tint = Theme.Hex(WeatherSys.Def(w).hex);
+            bool clear = w == Weather.Sunny || w == Weather.Drought;
+            if (clear && DayCycle.Sample(DayCycle.Hour).night >= 0.5f)
+            {
+                tint = Theme.Hex("#F4EDC2");
+                return Load("Art/weather/w_moon");
+            }
+            return WeatherIcon(w);
+        }
+
         public static Sprite WeatherIcon(Weather w)
         {
             switch (w)
@@ -151,9 +174,11 @@ namespace LQFarm
         };
 
         /// <summary>Grow time is stretched by tier, but never by more than this in absolute terms.
-        /// A legendary avocado goes 470 s to 1034 s; the cap keeps even that inside one overnight
-        /// gap, so a good roll is never a punishment for sleeping.</summary>
-        public const float MaxMutationGrowAddSeconds = 15f * 60f;
+        /// The tiers are ×1,2 to ×2,2, which is felt on a short crop (a legendary tomato: 10 → 22
+        /// minutes) and would be a day and a half on a 24-hour one — so the extra is at most an hour,
+        /// and the whole duration is still clamped to <see cref="GameData.MaxGrowSeconds"/>: a good
+        /// roll is never a punishment for sleeping.</summary>
+        public const float MaxMutationGrowAddSeconds = 60f * 60f;
 
         public static Element Elem(int v)
         {
@@ -164,14 +189,15 @@ namespace LQFarm
         /// each, no per-element artwork — mutations tint them, the same as every crop outside
         /// the original painted set. Owned art, so these carry no provenance question.</summary>
         static readonly HashSet<string> Generated = new HashSet<string>
-        { "wheat", "tomato", "corn", "watermelon", "strawberry", "peach" };
+        { "wheat", "tomato", "corn", "watermelon", "strawberry", "peach", "grape", "mushroom", "eggplant", "pineapple",
+          "pumpkin", "banana", "coconut", "orange", "apple" };
 
         public static bool IsGenerated(string art) { return Generated.Contains(art); }
 
         /// <summary>Crops whose sheet carries all four elements (3 painted stages).</summary>
         static readonly HashSet<string> Elemental = new HashSet<string> { "potato" };
         /// <summary>Crops with 4 painted stages but no elemental art.</summary>
-        static readonly HashSet<string> Staged = new HashSet<string> { "pumpkin", "carrot" };
+        static readonly HashSet<string> Staged = new HashSet<string> { "carrot" };
 
         public static bool IsElemental(string art) { return Elemental.Contains(art); }
         public static bool IsStaged(string art)    { return Staged.Contains(art); }
@@ -213,10 +239,12 @@ namespace LQFarm
         static readonly Color[] Tint =
         {
             Color.white,
-            new Color(0.62f, 1.00f, 0.78f),   // ngọc bích
-            new Color(0.63f, 0.86f, 1.00f),   // băng
-            new Color(1.00f, 0.62f, 0.40f),   // hoả
-            new Color(1.00f, 0.90f, 0.42f),   // lôi
+            // deeper than they were (0.62/0.63/0.40/0.42 floors): a light wash read as "a bit
+            // pale", not as a different crop
+            new Color(0.50f, 1.00f, 0.70f),   // ngọc bích
+            new Color(0.52f, 0.78f, 1.00f),   // băng
+            new Color(1.00f, 0.50f, 0.30f),   // hoả
+            new Color(1.00f, 0.84f, 0.28f),   // lôi
         };
 
         public static Color VariantTint(string art, int v)

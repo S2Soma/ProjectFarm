@@ -24,13 +24,33 @@ namespace LQFarm
                 case "water3":   return 6f;    // saves taps, not time — cheap on purpose
                 case "seedbag":  return 5f;
                 case "energy":   return 12f;
-                case "instant":  return 10f;   // one crop's worth of time, priced above one crop
-                case "mutate":   return 18f;
+                case "instant":  return 6f;    // ripens the plot with the longest wait: a day's crop for less than Chín ngay on it
+                case "mutate":   return 30f;   // read at plant: ten minutes can cover a whole farm of day-long crops
                 case "forecast": return 14f;
                 case "reroll":   return 8f;
-                case "green":    return 30f;   // the most expensive thing on the shelf
+                case "green":    return 30f;
+                case "xp2":      return 30f;   // read at harvest: a farm of long crops comes in at once
+                case "tonic":    return 26f;   // half the wait on every plot of one island
+                case "chest":    return 15f;
+                case "seedbest": return 10f;   // three of the top seed cost about 9 UNIT in the seed shop
                 default:         return 10f;
             }
+        }
+
+        /// <summary>UNIT charged for skipping one <see cref="MissionSys.UnitHours"/>-hour stretch of growing.</summary>
+        public const float RushUnitsPerSlot = 2.5f;
+
+        /// <summary>"Chín ngay" on one plot, priced by the TIME it skips: 2,5 UNIT per eight hours still
+        /// to grow, a tenth of a UNIT at the least. UNIT is one plot's eight hours, so skipping them costs
+        /// two and a half times what the plot would have earned — a convenience, never a profit. A
+        /// fresh 20-hour watermelon is ~6 UNIT, a carrot with a minute left is the floor.
+        ///
+        /// It used to be "2 UNIT for a whole crop", which priced a carrot and an avocado alike.</summary>
+        public static int RushPrice(PlayerState s, Plot p)
+        {
+            if (p == null || string.IsNullOrEmpty(p.crop)) return 0;
+            float slots = PlotLogic.Remain(p) / (MissionSys.UnitHours * 3600f);
+            return Round(MissionSys.Unit(s) * Mathf.Max(0.1f, RushUnitsPerSlot * slots));
         }
 
         public static int PriceOf(PlayerState s, ShopItem it)
@@ -61,11 +81,12 @@ namespace LQFarm
 
         public static bool ForecastActive(PlayerState s) { return s.forecastUntil > GS.Now; }
 
-        /// <summary>Hours ahead the player can currently see. One normally (and only near the
-        /// turn of the hour), twelve while a forecast is running.</summary>
-        public static int ForecastHours(PlayerState s)
+        /// <summary>Weather windows ahead the player can currently see: one normally (and only in
+        /// the last minutes of a window), every window until the forecast runs out while one is
+        /// running.</summary>
+        public static int ForecastSlots(PlayerState s)
         {
-            if (ForecastActive(s)) return (int)((s.forecastUntil - GS.Now) / 3_600_000L) + 1;
+            if (ForecastActive(s)) return (int)((s.forecastUntil - GS.Now) / WeatherSys.SlotMs) + 1;
             return WeatherSys.NextRevealed(GS.Now) ? 1 : 0;
         }
 

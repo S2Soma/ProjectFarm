@@ -27,6 +27,20 @@ namespace LQFarm
     /// **Each island carries one farm-wide perk.** They are deliberately on different axes —
     /// sell, mutation, speed, XP — so the second island is not simply a bigger first one, and so
     /// a player mid-way through the archipelago can name what they are working toward.</summary>
+    /// <summary>How an island lays out its sixteen grid slots.</summary>
+    public enum IslandLayout
+    {
+        /// <summary>The 4 x 4 field of small beds.</summary>
+        Grid,
+        /// <summary>Đảo Nước: the same sixteen small beds, split into two banks of eight by a river
+        /// one cell wide that runs across the island and pours off its front edge.</summary>
+        River,
+        /// <summary>Đảo Khổng Lồ: four big beds, each covering a 2 x 2 block of the grid.</summary>
+        Giant,
+    }
+
+    public enum PlotKind { None, Small, Big }
+
     public class IslandDef
     {
         public int index;
@@ -52,53 +66,80 @@ namespace LQFarm
         /// 21x its first, so "buy the next plot" stays the obvious thing to do with loose coins
         /// at every point in the game.</summary>
         public float plotMul;
+
+        public IslandLayout layout = IslandLayout.Grid;
+        /// <summary>Which painting in Art/islands (Tools/gen_islands.py THEMES) this island uses.</summary>
+        public int style;
     }
 
     public static class IslandSys
     {
-        public const int Max = 6;
+        public const int Max = 8;
 
+        /// <summary>2026-09-15 (crops from 2 minutes to 24 hours): every tribute crop is what sixteen plots
+        /// grow in about a day of four sessions (IslandTest measures it with EconomyModel), so Đảo Vàng
+        /// asks for 24 Dứa (a 22-hour crop) where Đảo Gió asks for 110 Ngô. Island coin prices and plot
+        /// ladders were set against the session journey (JourneyTest): an island opens a day or two after
+        /// its level gate, and each plot stays under a day of the farm's crop income.
+        ///
+        /// Đảo Nước and Đảo Khổng Lồ were inserted after Vườn Nhà on 2026-09-15; every island after
+        /// them moved up two places. Saves from before carry <c>SaveDto.islandsV</c> below 2 and are
+        /// remapped on load (SaveIO), so nobody's Đảo Gió turns into a river.</summary>
         public static readonly IslandDef[] Defs =
         {
             new IslandDef {
                 index = 0, name = "Vườn Nhà", blurb = "Nơi mọi thứ bắt đầu",
                 lv = 1, coin = 0, tribute = new Tribute[0],
-                perk = null, freePlots = 6, plotMul = 1f,
+                perk = null, freePlots = 6, plotMul = 1f, style = 0,
             },
             new IslandDef {
-                index = 1, name = "Đảo Gió", blurb = "Gió biển thổi quanh năm",
-                lv = 5, coin = 60_000,
-                tribute = new[] { new Tribute("corn", 160), new Tribute("tomato", 200) },
+                index = 1, name = "Đảo Nước", blurb = "Dòng sông chảy qua giữa đảo",
+                lv = 3, coin = 15_000,
+                tribute = new[] { new Tribute("carrot", 60), new Tribute("wheat", 40) },
                 perk = "+5% giá bán toàn trang trại", sellMul = 1.05f,
-                freePlots = 4, plotMul = 7f,
+                freePlots = 4, plotMul = 2.5f, layout = IslandLayout.River, style = 6,
             },
             new IslandDef {
-                index = 2, name = "Đảo Băng", blurb = "Lạnh giá, cây mọc lạ",
-                lv = 10, coin = 420_000,
-                tribute = new[] { new Tribute("eggplant", 260), new Tribute("pepper", 300), new Tribute("mushroom", 320) },
+                index = 2, name = "Khổng Lồ", blurb = "Bốn ô đất lớn cho cây lớn",
+                lv = 6, coin = 60_000,
+                tribute = new[] { new Tribute("tomato", 90), new Tribute("potato", 70) },
+                perk = "+5% kinh nghiệm", xpMul = 1.05f,
+                freePlots = 2, plotMul = 5f, layout = IslandLayout.Giant, style = 7,
+            },
+            new IslandDef {
+                index = 3, name = "Đảo Gió", blurb = "Gió biển thổi quanh năm",
+                lv = 9, coin = 250_000,
+                tribute = new[] { new Tribute("corn", 110), new Tribute("mushroom", 160) },
+                perk = "+5% giá bán toàn trang trại", sellMul = 1.05f,
+                freePlots = 4, plotMul = 15f, style = 1,
+            },
+            new IslandDef {
+                index = 4, name = "Đảo Băng", blurb = "Lạnh giá, cây mọc lạ",
+                lv = 12, coin = 700_000,
+                tribute = new[] { new Tribute("eggplant", 90), new Tribute("pepper", 110), new Tribute("broccoli", 150) },
                 perk = "+3% tỉ lệ đột biến", mutateAdd = 0.03f,
-                freePlots = 4, plotMul = 20f,
+                freePlots = 4, plotMul = 30f, style = 2,
             },
             new IslandDef {
-                index = 3, name = "Đảo Hoả", blurb = "Đất núi lửa, cây lớn nhanh",
-                lv = 16, coin = 1_500_000,
-                tribute = new[] { new Tribute("cabbage", 330), new Tribute("grape", 660), new Tribute("beetroot", 300) },
+                index = 5, name = "Đảo Hoả", blurb = "Đất núi lửa, cây lớn nhanh",
+                lv = 16, coin = 1_300_000,
+                tribute = new[] { new Tribute("cabbage", 80), new Tribute("grape", 160), new Tribute("beetroot", 80) },
                 perk = "−8% thời gian mọc", growMul = 0.92f,
-                freePlots = 4, plotMul = 40f,
+                freePlots = 4, plotMul = 50f, style = 3,
             },
             new IslandDef {
-                index = 4, name = "Đảo Lôi", blurb = "Sấm chớp nuôi cây",
-                lv = 22, coin = 4_000_000,
-                tribute = new[] { new Tribute("peach", 450), new Tribute("pear", 390), new Tribute("orange", 560) },
+                index = 6, name = "Đảo Lôi", blurb = "Sấm chớp nuôi cây",
+                lv = 22, coin = 3_500_000,
+                tribute = new[] { new Tribute("peach", 60), new Tribute("pear", 70), new Tribute("lemon", 100) },
                 perk = "+10% kinh nghiệm", xpMul = 1.10f,
-                freePlots = 4, plotMul = 70f,
+                freePlots = 4, plotMul = 90f, style = 4,
             },
             new IslandDef {
-                index = 5, name = "Đảo Vàng", blurb = "Đảo cuối, giàu nhất",
-                lv = 28, coin = 9_500_000,
-                tribute = new[] { new Tribute("pineapple", 360), new Tribute("watermelon", 360), new Tribute("banana", 900), new Tribute("cherries", 1080) },
+                index = 7, name = "Đảo Vàng", blurb = "Đảo cuối, giàu nhất",
+                lv = 28, coin = 5_000_000,
+                tribute = new[] { new Tribute("pineapple", 24), new Tribute("watermelon", 24), new Tribute("strawberry", 90), new Tribute("cherries", 120) },
                 perk = "+15% giá bán toàn trang trại", sellMul = 1.15f,
-                freePlots = 4, plotMul = 115f,
+                freePlots = 4, plotMul = 100f, style = 5,
             },
         };
 
@@ -116,6 +157,43 @@ namespace LQFarm
         // plots
         // ============================================================
         public const int PlotsPerIsland = 16;
+
+        /// <summary>What slot <paramref name="slot"/> of an island is. Big plots are anchored at the
+        /// top-left cell (row, column both even) of the 2 x 2 block they cover.</summary>
+        public static PlotKind KindOf(int island, int slot)
+        {
+            if (slot < 0 || slot >= PlotsPerIsland) return PlotKind.None;
+            if (Def(island).layout != IslandLayout.Giant) return PlotKind.Small;
+            int r = slot / 4, c = slot % 4;
+            return (r % 2 == 0 && c % 2 == 0) ? PlotKind.Big : PlotKind.None;
+        }
+
+        /// <summary>Plots that exist on an island: 16, or 4 on Đảo Khổng Lồ.</summary>
+        public static int SlotCount(int island)
+        {
+            int n = 0;
+            for (int i = 0; i < PlotsPerIsland; i++) if (KindOf(island, i) != PlotKind.None) n++;
+            return n;
+        }
+
+        /// <summary>A slot's position in grid cells (u along the columns, v along the rows, from the
+        /// field centre): the cell's centre, the middle of the 2 x 2 block for a big plot, and pushed
+        /// half a cell away from the river on Đảo Nước.</summary>
+        public static Vector2 SlotCell(int island, int slot)
+        {
+            int r = slot / 4, c = slot % 4;
+            float u = c - 1.5f, v = r - 1.5f;
+            var d = Def(island);
+            if (d.layout == IslandLayout.Giant) { u += 0.5f; v += 0.5f; }
+            else if (d.layout == IslandLayout.River) v += r < 2 ? -RiverHalf : RiverHalf;
+            return new Vector2(u, v);
+        }
+
+        /// <summary>Half the gap the river opens between the banks, in cells.</summary>
+        public const float RiverHalf = 0.5f;
+
+        /// <summary>1 for a small plot, 2 for a big one: how much larger its bed and crop are drawn.</summary>
+        public static float SizeOf(int island, int slot) { return KindOf(island, slot) == PlotKind.Big ? 2f : 1f; }
 
         /// <summary>Island one is hand-tuned rather than generated. It is the only island a player
         /// sees before they have any idea what a coin is worth, so its ladder is set by what each
@@ -149,6 +227,8 @@ namespace LQFarm
             int k = owned - d.freePlots;         // 0-based index among the purchasable ones
             if (k < 0) return 0;
             float raw = 500f * Mathf.Pow(1.32f, k) * d.plotMul;
+            // a big plot is four cells of land, and is priced as four
+            if (d.layout == IslandLayout.Giant) raw *= 4f;
             return Round(raw);
         }
 
@@ -170,10 +250,24 @@ namespace LQFarm
         /// <summary>Plots an island starts with unlocked.</summary>
         public static bool StartsUnlocked(int island, int slot)
         {
-            int free = Def(island).freePlots;
-            for (int i = 0; i < free && i < FreeOrder.Length; i++)
-                if (FreeOrder[i] == slot) return true;
+            if (KindOf(island, slot) == PlotKind.None) return false;
+            int free = Def(island).freePlots, n = 0;
+            foreach (int f in FreeOrder)
+            {
+                if (KindOf(island, f) == PlotKind.None) continue;
+                if (n++ >= free) return false;
+                if (f == slot) return true;
+            }
             return false;
+        }
+
+        /// <summary>The locked plot the player is most likely to open next — the first still locked
+        /// in <see cref="FreeOrder"/> — or -1. It is the one that shows its level on the map.</summary>
+        public static int NextPlotSlot(Island isl, int island)
+        {
+            foreach (int f in FreeOrder)
+                if (KindOf(island, f) != PlotKind.None && f < isl.plots.Count && isl.plots[f].locked) return f;
+            return -1;
         }
 
         public static int OpenCount(Island isl)

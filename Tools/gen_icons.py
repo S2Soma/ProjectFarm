@@ -133,8 +133,127 @@ def grid_more(size=192):
     return img
 
 
-for fn, name in ((droplet, "droplet"), (checkmark, "check"), (exclamation, "alert"),
-                 (grid_more, "more")):
-    im = fn()
-    im.save(os.path.join(OUT, name + ".png"))
-    print(name + ".png", im.size)
+def speaker(size=192, on=True):
+    """Sound on / off: a speaker cone with two sound waves, or with a cross. Supersampled 4x."""
+    SSz = size * 4
+    big = Image.new("L", (SSz, SSz), 0)
+    from PIL import ImageDraw
+    d = ImageDraw.Draw(big)
+    k = SSz / 192.0
+    # box and cone
+    d.rounded_rectangle((30 * k, 74 * k, 66 * k, 118 * k), radius=8 * k, fill=255)
+    d.polygon([(58 * k, 76 * k), (104 * k, 40 * k), (104 * k, 152 * k), (58 * k, 116 * k)], fill=255)
+    d.rounded_rectangle((96 * k, 38 * k, 110 * k, 154 * k), radius=7 * k, fill=255)
+    if on:
+        for r, w in ((30, 13), (58, 13)):
+            d.arc((104 * k - r * k, 96 * k - r * k, 104 * k + r * k + 20 * k, 96 * k + r * k), -50, 50,
+                  fill=255, width=int(w * k))
+    else:
+        for (x0, y0, x1, y1) in ((128, 70, 170, 122), (170, 70, 128, 122)):
+            d.line((x0 * k, y0 * k, x1 * k, y1 * k), fill=255, width=int(15 * k))
+        for (cx, cy) in ((128, 70), (170, 70), (128, 122), (170, 122)):
+            d.ellipse(((cx - 7.5) * k, (cy - 7.5) * k, (cx + 7.5) * k, (cy + 7.5) * k), fill=255)
+    a = big.resize((size, size), Image.LANCZOS)
+    img = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+    img.putalpha(a)
+    return img
+
+
+def _glyph(draw_fn, size=192):
+    """White glyph drawn by draw_fn(ImageDraw, k) on a 192-unit grid, supersampled 4x."""
+    from PIL import ImageDraw
+    SSz = size * 4
+    big = Image.new("L", (SSz, SSz), 0)
+    draw_fn(ImageDraw.Draw(big), SSz / 192.0)
+    a = big.resize((size, size), Image.LANCZOS)
+    img = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+    img.putalpha(a)
+    return img
+
+
+def upgrade_arrow(size=192):
+    """Nâng cấp: a heavy arrow up off a base line. The menu used the barn for it, which is
+    also what a warehouse looks like — so "Nâng cấp" and "Kho" were two buildings."""
+    def draw(d, k):
+        head = [(96 * k, 30 * k), (156 * k, 90 * k), (36 * k, 90 * k)]
+        d.polygon(head, fill=255)
+        # a thick round-jointed stroke round the head rounds its corners without knobs
+        d.line(head + [head[0], head[1]], fill=255, width=int(18 * k), joint="curve")
+        d.rounded_rectangle((68 * k, 84 * k, 124 * k, 150 * k), radius=10 * k, fill=255)
+        d.rounded_rectangle((40 * k, 158 * k, 152 * k, 180 * k), radius=11 * k, fill=255)
+    return _glyph(draw, size)
+
+
+def album(size=192):
+    """Sưu tập: a closed book with a star cut through its cover and a spine line. The pack's
+    album glyph was an empty card frame, which at 36 px read as a box."""
+    def draw(d, k):
+        d.rounded_rectangle((36 * k, 22 * k, 158 * k, 172 * k), radius=18 * k, fill=255)
+        d.rectangle((62 * k, 22 * k, 70 * k, 172 * k), fill=0)          # spine
+        d.rounded_rectangle((36 * k, 150 * k, 158 * k, 158 * k), radius=3 * k, fill=0)   # page edge
+        cx, cy, R, r = 112, 88, 38, 16
+        pts = []
+        for i in range(10):
+            ang = -math.pi / 2 + i * math.pi / 5
+            rr = R if i % 2 == 0 else r
+            pts.append(((cx + math.cos(ang) * rr) * k, (cy + math.sin(ang) * rr) * k))
+        d.polygon(pts, fill=0)
+    return _glyph(draw, size)
+
+
+def account(size=192):
+    """Menu ▸ Tài khoản: a head and shoulders."""
+    def draw(d, k):
+        d.ellipse((64 * k, 22 * k, 128 * k, 86 * k), fill=255)
+        d.chord((30 * k, 100 * k, 162 * k, 232 * k), 180, 360, fill=255)
+        d.rectangle((30 * k, 160 * k, 162 * k, 170 * k), fill=255)
+    return _glyph(draw, size)
+
+
+def cloud(size=192):
+    """Sync status: a cloud (the check / cross is drawn by the UI in colour)."""
+    def draw(d, k):
+        d.ellipse((24 * k, 84 * k, 88 * k, 148 * k), fill=255)
+        d.ellipse((58 * k, 44 * k, 138 * k, 124 * k), fill=255)
+        d.ellipse((106 * k, 84 * k, 170 * k, 148 * k), fill=255)
+        d.rounded_rectangle((52 * k, 100 * k, 142 * k, 148 * k), radius=10 * k, fill=255)
+    return _glyph(draw, size)
+
+
+def phone(size=192):
+    """"Trên máy này" in the save choice: a phone with its screen cut out."""
+    def draw(d, k):
+        d.rounded_rectangle((52 * k, 14 * k, 140 * k, 178 * k), radius=18 * k, fill=255)
+        d.rounded_rectangle((62 * k, 34 * k, 130 * k, 146 * k), radius=6 * k, fill=0)
+        d.ellipse((88 * k, 152 * k, 104 * k, 168 * k), fill=0)
+    return _glyph(draw, size)
+
+
+def music(size=192, on=True):
+    """Nhạc nền on / off: two beamed eighth notes, or the same notes struck through."""
+    def draw(d, k):
+        d.ellipse((30 * k, 128 * k, 82 * k, 170 * k), fill=255)          # left note head
+        d.ellipse((112 * k, 110 * k, 164 * k, 152 * k), fill=255)        # right note head
+        d.rectangle((68 * k, 44 * k, 82 * k, 150 * k), fill=255)         # stems
+        d.rectangle((150 * k, 26 * k, 164 * k, 132 * k), fill=255)
+        d.polygon([(68 * k, 44 * k), (164 * k, 22 * k), (164 * k, 54 * k), (68 * k, 76 * k)], fill=255)   # beam
+        if not on:
+            d.line((24 * k, 24 * k, 168 * k, 168 * k), fill=0, width=int(34 * k))
+            d.line((24 * k, 24 * k, 168 * k, 168 * k), fill=255, width=int(14 * k))
+    return _glyph(draw, size)
+
+
+ALL = ((droplet, "droplet"), (checkmark, "check"), (exclamation, "alert"),
+       (grid_more, "more"), (lambda: speaker(on=True), "sound_on"), (lambda: speaker(on=False), "sound_off"),
+       (upgrade_arrow, "nav_upgrade"), (album, "nav_album2"), (account, "account"), (cloud, "cloud"), (phone, "phone"),
+       (lambda: music(on=True), "music_on"), (lambda: music(on=False), "music_off"))
+
+if __name__ == "__main__":
+    import sys
+    want = set(sys.argv[1:])            # e.g. python Tools/gen_icons.py nav_upgrade nav_album2
+    for fn, name in ALL:
+        if want and name not in want:
+            continue
+        im = fn()
+        im.save(os.path.join(OUT, name + ".png"))
+        print(name + ".png", im.size)

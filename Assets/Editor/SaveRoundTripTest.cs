@@ -23,8 +23,9 @@ namespace LQFarm.EditorTools
             RefusesFuture(fails);
             RefusesCorrupt(fails);
             KeepsUnknownFields(fails);
+            MigratesOldEconomyOnce(fails);
 
-            if (fails.Count == 0) Debug.Log("File lưu OK — 5/5 kiểm tra đạt.");
+            if (fails.Count == 0) Debug.Log("File lưu OK — 6/6 kiểm tra đạt.");
             else
             {
                 foreach (var f in fails) Debug.LogError("File lưu: " + f);
@@ -48,6 +49,8 @@ namespace LQFarm.EditorTools
             a.stealLeft = 18;
             a.day = 20343;
             a.buffMutateUntil = 1789207815434L;
+            a.buffXpUntil = 1789207899999L;
+            a.pets["mit"] = 3; a.pets["bega"] = 1; a.petActive = "mit"; a.petEggs = 42; a.petPity = 7; a.petSnacks = 5; a.petFreeEggs = 288;
             a.chests = new[] { 2, 1, 0, 3 };
             a.stats = new Stats { harvest = 812, plant = 840, water = 1960, sell = 3011, chest = 22, visit = 61, mutate = 74 };
             a.clock.lastSeenUtc = 1789207815434L;
@@ -65,7 +68,13 @@ namespace LQFarm.EditorTools
             a.claimedSets.Add("k1");
             a.claimedMs.Add(6); a.claimedMs.Add(20);
             a.shopBought.Add("s4");
+            a.shopBought.Add("fr_gold");
+            Cosmetics.Wear(a, "fr_gold");
             a.visited.Add("f1");
+            a.tutorial = "TapWater";
+            a.tipsSeen.Add("chest"); a.tipsSeen.Add("weather");
+            a.redeemedCodes.Add("TONGDAIYUMMY");
+            a.coin = 22_000_005_000L;
 
             // Part-paid tribute on a locked island — the state that exists for days at a time
             // while a player works toward Đảo Gió.
@@ -80,6 +89,7 @@ namespace LQFarm.EditorTools
             a.plots[3].waterMask = 0b010;
             a.plots[3].friendMask = 0b010;
             a.plots[3].windowCount = 3;
+            a.plots[3].waterSec = 960f;
 
             string json = SaveIO.ToJson(a);
 
@@ -94,6 +104,9 @@ namespace LQFarm.EditorTools
             Check(fails, b.worldSeed == a.worldSeed, $"worldSeed sai: {b.worldSeed:x16} != {a.worldSeed:x16}");
             Check(fails, b.stealLeft == a.stealLeft && b.day == a.day, "stealLeft/day sai");
             Check(fails, b.buffMutateUntil == a.buffMutateUntil, "buffMutateUntil sai");
+            Check(fails, b.buffXpUntil == a.buffXpUntil, "buffXpUntil sai");
+            Check(fails, b.pets.Count == 2 && b.pets["mit"] == 3 && b.petActive == "mit"
+                         && b.petEggs == 42 && b.petPity == 7 && b.petSnacks == 5 && b.petFreeEggs == 288, "thú cưng sai");
             Check(fails, b.chests.SequenceEqual(a.chests), "rương sai");
             Check(fails, b.stats.harvest == 812 && b.stats.mutate == 74, "stats sai");
 
@@ -107,9 +120,13 @@ namespace LQFarm.EditorTools
             Check(fails, b.daily.Count == 1 && b.daily["d2"].p == 3 && !b.daily["d2"].claimed, "hằng ngày sai");
             Check(fails, b.collected.SetEquals(a.collected), "sưu tập sai");
             Check(fails, b.claimedSets.SetEquals(a.claimedSets), "bộ đã nhận sai");
+            Check(fails, Cosmetics.IsWorn(b, "fr_gold") && b.equipped.Count == 1, "đồ trang trí đang dùng sai");
             Check(fails, b.claimedMs.SetEquals(a.claimedMs), "mốc đã nhận sai");
             Check(fails, b.shopBought.SetEquals(a.shopBought), "đã mua sai");
             Check(fails, b.visited.SetEquals(a.visited), "đã thăm sai");
+            Check(fails, b.tutorial == "TapWater" && b.tipsSeen.SetEquals(a.tipsSeen), "tiến độ hướng dẫn sai");
+            Check(fails, b.redeemedCodes.SetEquals(a.redeemedCodes), "mã quà đã dùng sai");
+            Check(fails, b.coin == 22_000_005_000L, $"xu vượt 2,1 tỷ bị mất khi lưu: {b.coin}");
 
             // Six island records, one of them unlocked. SyncPlots creates a record for every
             // island in the table whether or not it is open, because a locked island still holds
@@ -138,6 +155,16 @@ namespace LQFarm.EditorTools
             Check(fails, pb.variant == 2, "ô 3: variant sai");
             Check(fails, pb.waterMask == 0b010 && pb.friendMask == 0b010 && pb.windowCount == 3,
                   $"ô 3: mặt nạ tưới sai {pb.waterMask}/{pb.friendMask}/{pb.windowCount}");
+            Check(fails, Mathf.Approximately(pb.waterSec, 960f), $"ô 3: thời gian mỗi lần tưới sai {pb.waterSec}");
+
+            // a plot written before per-crop watering has no waterSec key: it reads as 0 and keeps the old rule
+            var oldDoc = Newtonsoft.Json.Linq.JObject.Parse(json);
+            foreach (var plot in oldDoc.SelectTokens("$..plots[*]"))
+                ((Newtonsoft.Json.Linq.JObject)plot).Remove("waterSec");
+            var c = new PlayerState();
+            Check(fails, SaveIO.FromJson(c, oldDoc.ToString(), out _) == SaveIO.LoadResult.Loaded, "file lưu không có waterSec không đọc được");
+            Check(fails, c.plots[3].waterSec == 0f && c.plots[3].windowCount == 3 && Mathf.Approximately(c.plots[3].dur, 268f),
+                  "ô cũ không có waterSec phải đọc ra 0 và giữ nguyên dur/số cữ");
         }
 
         // ------------------------------------------------------------
@@ -205,6 +232,61 @@ namespace LQFarm.EditorTools
             Check(fails, (string)after["guildId"] == "g-77", "khoá lạ cấp gốc bị mất");
             Check(fails, (int?)after["player"]?["prestige"] == 3, "khoá lạ trong player bị mất");
             Check(fails, (int?)after["player"]?["coin"] == 4321, "dữ liệu quen bị hỏng khi giữ khoá lạ");
+        }
+
+        // ------------------------------------------------------------
+        /// <summary>A save from before the 2026-09-15 economy is carried over once, keeping its place on the
+        /// level curve: the coins still buy the same number of next levels, the XP bar is as full as it was,
+        /// the farm, seeds, chests and growing plots are untouched — and loading the file this build wrote
+        /// back changes nothing more. A save that already carries the key, or already has a plot planted
+        /// under per-crop watering, is never rescaled, and a gift-code fortune just scales like any balance.</summary>
+        static void MigratesOldEconomyOnce(List<string> fails)
+        {
+            var s = new PlayerState();
+            var res = SaveIO.FromJson(s, LegacySaveFixture.Level12, out _);
+            Check(fails, res == SaveIO.LoadResult.Loaded, $"save cũ cấp 12: kỳ vọng Loaded, nhận {res}");
+
+            GameData.LegacyLevel(12, out int oldXp, out int oldCost);
+            var now = GameData.Level(12);
+            long wantCoin = (long)System.Math.Round(286400.0 * now.cost / oldCost);
+            long wantXp = (long)System.Math.Round(1200.0 * now.xpNeed / oldXp);
+            Check(fails, s.lv == 12, $"save cũ: cấp đổi thành {s.lv}");
+            Check(fails, s.coin == wantCoin, $"save cũ: {s.coin} xu, kỳ vọng {wantCoin} (286.400 × {now.cost}/{oldCost})");
+            Check(fails, s.xp == wantXp, $"save cũ: {s.xp} XP, kỳ vọng {wantXp}");
+            Check(fails, Mathf.Abs(s.coin / (float)now.cost - 286400f / oldCost) < 0.01f, "save cũ: số cấp 'trong ngân hàng' bị đổi");
+            Check(fails, Mathf.Abs(s.xp / (float)now.xpNeed - 1200f / oldXp) < 0.01f, "save cũ: thanh XP đầy khác trước");
+            Check(fails, s.energy < s.EnergyGoal, $"save cũ: năng lượng {s.energy} ≥ ngưỡng rương {s.EnergyGoal}");
+            Check(fails, s.seeds["carrot"] == 26 && s.chests[0] == 1, "save cũ: hạt giống / rương bị đụng tới");
+            var carrot = s.islands[0].plots[0];
+            Check(fails, carrot.crop == "carrot" && Mathf.Approximately(carrot.dur, 35f) && carrot.waterSec == 0f && carrot.windowCount == 1,
+                  "save cũ: ô đang trồng bị đổi thời gian hoặc số cữ");
+            Check(fails, s.islands.Count >= 5 && s.islands[3].unlocked && s.islands[1].unlocked, "save cũ: đảo không được chuyển thứ tự như trước");
+
+            // written back: the key is there, and a second load is not a second rescale
+            string json = SaveIO.ToJson(s);
+            Check(fails, (int?)Newtonsoft.Json.Linq.JObject.Parse(json)["econV"] == SaveIO.EconomyVersion, "file ghi lại không có econV");
+            var again = new PlayerState();
+            SaveIO.FromJson(again, json, out _);
+            Check(fails, again.coin == s.coin && again.xp == s.xp, $"nạp lại lần hai lại quy đổi thêm: {again.coin} xu / {again.xp} XP");
+
+            // same old file loaded twice from disk before any save: the same result, not double
+            var twice = new PlayerState();
+            SaveIO.FromJson(twice, LegacySaveFixture.Level12, out _);
+            Check(fails, twice.coin == s.coin, "nạp file cũ hai lần cho kết quả khác nhau");
+
+            // no key, but a plot already planted under per-crop watering: a new-economy file, left alone
+            var doc = Newtonsoft.Json.Linq.JObject.Parse(LegacySaveFixture.Level12);
+            ((Newtonsoft.Json.Linq.JObject)doc["islands"][0]["plots"][0])["waterSec"] = 30f;
+            var fresh = new PlayerState();
+            SaveIO.FromJson(fresh, doc.ToString(), out _);
+            Check(fails, fresh.coin == 286400 && fresh.xp == 1200, "file đã theo kinh tế mới (có waterSec) vẫn bị quy đổi");
+
+            // a gift-code fortune: rescaled like anything else, no overflow, still rich
+            var rich = Newtonsoft.Json.Linq.JObject.Parse(LegacySaveFixture.Level12);
+            rich["player"]["coin"] = 22_000_286_400L;
+            var r = new PlayerState();
+            SaveIO.FromJson(r, rich.ToString(), out _);
+            Check(fails, r.coin > 22_000_000_000L && r.coin < long.MaxValue / 4, $"save giàu nhờ mã quà: {r.coin} xu");
         }
     }
 }

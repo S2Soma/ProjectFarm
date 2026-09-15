@@ -36,7 +36,7 @@ namespace LQFarm
             hero.rectTransform.Anchor(UIKit.TopLeft, Vector2.zero, new Vector2(420, 124));
             hero.rectTransform.pivot = new Vector2(0, 1);
 
-            var icon = UIKit.Img(hero.rectTransform, Art.WeatherIcon(w), Theme.Hex(d.hex), "icon");
+            var icon = UIKit.Img(hero.rectTransform, Art.WeatherIconNow(w, out var nowTint), nowTint, "icon");
             icon.preserveAspect = true;
             icon.rectTransform.Anchor(UIKit.Left, new Vector2(62, 0), new Vector2(76, 76));
 
@@ -61,7 +61,7 @@ namespace LQFarm
 
             // trước → nay → kế. Three cells is honest: rotation is random, and only "next" is
             // ever knowable. It also teaches the sixty-minute cadence without a word.
-            long h = WeatherSys.HourIndex(now);
+            long h = WeatherSys.SlotIndex(now);
             Strip(left, 0, "Trước", WeatherSys.At(s, h - 1), 0.45f);
             Strip(left, 1, "Nay", w, 1f);
             bool reveal = WeatherSys.Revealed(s, now);
@@ -105,7 +105,7 @@ namespace LQFarm
 
             bool idle = Mathf.Abs(mul - 1f) < 0.001f;
             int pct = Mathf.RoundToInt((mul - 1f) * 100f);
-            var v = UIKit.Label(row.rectTransform, idle ? "—" : (pct > 0 ? "+" : "") + pct + "%",
+            var v = UIKit.Label(row.rectTransform, idle ? "·" : (pct > 0 ? "+" : "") + pct + "%",
                                 18, idle ? Theme.InkSoft : (((pct > 0) == higherIsBetter) ? Theme.GreenDeep : Theme.Red),
                                 TextAnchor.MiddleRight, idle ? FontStyle.Normal : FontStyle.Bold);
             v.rectTransform.Stretch(120, 0, 12, 0);
@@ -114,9 +114,9 @@ namespace LQFarm
         /// <summary>The bought forecast: one small cell per hour, out to twelve.</summary>
         void Forecast(RectTransform parent, PlayerState s, long hour)
         {
-            int hours = Mathf.Clamp(ShopSys.ForecastHours(s), 1, 12);
+            int hours = Mathf.Clamp(ShopSys.ForecastSlots(s), 1, 12);
 
-            var hdr = UIKit.Label(parent, "Dự báo " + hours + " giờ tới", 15, Theme.InkSoft,
+            var hdr = UIKit.Label(parent, "Dự báo " + hours + " lượt thời tiết tới (mỗi lượt 15 phút)", 15, Theme.InkSoft,
                                   TextAnchor.MiddleLeft);
             hdr.rectTransform.Anchor(UIKit.TopLeft, new Vector2(8, -352), new Vector2(410, 20));
             hdr.rectTransform.pivot = new Vector2(0, 1);
@@ -134,9 +134,9 @@ namespace LQFarm
                 ic.preserveAspect = true;
                 ic.rectTransform.Anchor(UIKit.Top, new Vector2(0, -3), new Vector2(22, 22));
 
-                // Hour of day, so the row maps onto the player's evening rather than onto "+7h".
-                long hourOfDay = (hour + 1 + i) % 24L;
-                var lb = UIKit.Label(cell, hourOfDay + "g", 11, Theme.InkSoft, TextAnchor.MiddleCenter);
+                // Clock time the window starts, so the row maps onto the player's evening.
+                var start = System.DateTimeOffset.FromUnixTimeMilliseconds(WeatherSys.SlotStart(hour + 1 + i)).ToLocalTime();
+                var lb = UIKit.Label(cell, start.ToString("H:mm"), 10, Theme.InkSoft, TextAnchor.MiddleCenter);
                 lb.rectTransform.Anchor(UIKit.Bottom, new Vector2(0, 8), new Vector2(cw, 14));
             }
         }
@@ -174,7 +174,7 @@ namespace LQFarm
             cap.rectTransform.Anchor(UIKit.Bottom, new Vector2(0, 14), new Vector2(88, 20));
         }
 
-        static string Num(float v) { return v.ToString("0.00").Replace('.', ','); }
+        static string Num(float v) { return v.ToString("0.00", Fmt.Vi); }
 
         void TagCell(RectTransform parent, int index, TagSys.Tagged t, Weather nowW)
         {
@@ -185,20 +185,23 @@ namespace LQFarm
             float x = (index % 3) * 142f;
             float y = -62f - (index / 3) * 158f;
 
-            var cell = UIKit.Round(parent, Theme.Cream, 16, "tag" + index);
-            cell.rectTransform.Anchor(UIKit.TopLeft, new Vector2(x, y), new Vector2(132, 150));
-            cell.rectTransform.pivot = new Vector2(0, 1);
-
             bool season = t.tag == CropTag.Season;
             bool live = season && t.weather == nowW;
 
             // The season tag's border lighting up when its weather arrives IS the reason weather
             // and tags share a frame. Flattening the pair into one number would make the
             // interaction invisible, which is the interaction's whole value.
-            var frame = UIKit.Img(cell.rectTransform, Theme.Ring(0.10f),
-                                  live ? Theme.Amber : Theme.Hex(def.hex), "frame");
-            frame.rectTransform.Stretch(-1, -1, -1, -1);
-            if (!live && !season) frame.color = new Color(frame.color.r, frame.color.g, frame.color.b, 0.55f);
+            //
+            // The border is the cell's own plate with the cream face inset 3 px inside it. It was
+            // a CIRCLE ring sprite stretched over a 132x150 card — an ellipse cutting through the
+            // name and the chip.
+            Color border = live ? Theme.Amber : Theme.Hex(def.hex);
+            if (!live && !season) border.a = 0.55f;
+            var cell = UIKit.Round(parent, border, 19, "tag" + index);
+            cell.rectTransform.Anchor(UIKit.TopLeft, new Vector2(x, y), new Vector2(132, 150));
+            cell.rectTransform.pivot = new Vector2(0, 1);
+            var inner = UIKit.Round(cell.rectTransform, Theme.Cream, 16, "face");
+            inner.rectTransform.Stretch(3, 3, 3, 3);
 
             var art = UIKit.Img(cell.rectTransform, Art.Icon(seed.art, 0), Color.white, "art");
             art.preserveAspect = true;

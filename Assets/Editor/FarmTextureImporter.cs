@@ -13,6 +13,44 @@ namespace LQFarm.EditorTools
     {
         const string Root = "Assets/Resources/Art/";
 
+        /// <summary>Bumping this makes Unity re-run the rule over every texture it touched, so a
+        /// change here reaches existing art without anyone reimporting by hand. 2: mipmaps.
+        /// 3: rings and circles (the HUD weather ring is always shown at half size).
+        /// 4: the bridge folder, and U-repeat on the bridge strip.</summary>
+        public override uint GetVersion() { return 4; }
+
+        /// <summary>Art that is drawn MINIFIED gets mipmaps.
+        ///
+        /// This rule used to force mipmaps off for everything, and it runs on every import — so
+        /// the <c>enableMipMap: 1</c> written into those .meta files by the art generators was
+        /// silently put back to 0 on the next import. The islands, beds and crops are drawn from
+        /// 0.14x (whole archipelago) to 1.35x; without mips they shimmer and break up zoomed out.
+        /// Icons are drawn at 18-150 px from 256 px sources, and the material shapes are always
+        /// shown smaller than they are baked (see Chrome.Shape).
+        ///
+        /// Everything else — the Kenney skins, weather glyphs, backgrounds shown near 1:1 — stays
+        /// without, since a trilinear blend there only softens it.</summary>
+        static bool WantsMips(string path)
+        {
+            string[] dirs = { "beds/", "islands/", "gen/", "farm/", "crops_gen/", "crop/", "items/", "tiles/", "bridge/", "fx/", "pets/" };
+            foreach (var d in dirs)
+                if (path.StartsWith(Root + d)) return true;
+            // the arrival cinematic: the heaps and puffs start as specks and end larger than the
+            // screen, so they need mips; the veil and the light shafts are only ever drawn large
+            if (path.StartsWith(Root + "cine/"))
+            {
+                string file = System.IO.Path.GetFileName(path);
+                return file.StartsWith("cine_mass") || file.StartsWith("cine_puff");
+            }
+            if (path.StartsWith(Root + "chrome/"))
+            {
+                string file = System.IO.Path.GetFileName(path);
+                return file.StartsWith("shape_") || file.StartsWith("soft_") || file.StartsWith("top_")
+                    || file.StartsWith("ring_") || file.StartsWith("circle");
+            }
+            return false;
+        }
+
         void OnPreprocessTexture()
         {
             if (!assetPath.StartsWith(Root)) return;
@@ -21,10 +59,19 @@ namespace LQFarm.EditorTools
             im.textureType = TextureImporterType.Sprite;
             im.spriteImportMode = SpriteImportMode.Single;
             im.spritePixelsPerUnit = 100f;
-            im.mipmapEnabled = false;
+            bool mips = WantsMips(assetPath);
+            im.mipmapEnabled = mips;
+            im.mipmapFilter = TextureImporterMipFilter.KaiserFilter;
             im.alphaIsTransparency = true;
-            im.filterMode = FilterMode.Bilinear;
+            im.filterMode = mips ? FilterMode.Trilinear : FilterMode.Bilinear;
             im.wrapMode = TextureWrapMode.Clamp;
+            // The bridge strip is laid along a path of any length by BridgeRibbon and repeats
+            // horizontally; its rows are separated vertically, so V must still clamp.
+            if (assetPath.EndsWith("bridge/bridge_strip.png"))
+            {
+                im.wrapModeU = TextureWrapMode.Repeat;
+                im.wrapModeV = TextureWrapMode.Clamp;
+            }
             im.maxTextureSize = 2048;
             im.textureCompression = TextureImporterCompression.Uncompressed;
             im.npotScale = TextureImporterNPOTScale.None;

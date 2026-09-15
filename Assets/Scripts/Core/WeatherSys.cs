@@ -27,11 +27,12 @@ namespace LQFarm
         public string note;
     }
 
-    /// <summary>Weather: one of six states, changing on the hour, the same for every player.
+    /// <summary>Weather: one of six states, changing every <see cref="WeatherSys.SlotMs"/> (15 minutes),
+    /// the same for every player.
     ///
     /// Two rules carry the whole design.
     ///
-    /// **It is a pure function of (worldSeed, hour).** Nothing is stored, nothing is scheduled,
+    /// **It is a pure function of (worldSeed, slot).** Nothing is stored, nothing is scheduled,
     /// and no catch-up pass exists — a client that has been closed for a week computes the same
     /// history as one that was open. That is also what lets a server hand out a seed later and
     /// have every client agree without a sync.
@@ -43,11 +44,14 @@ namespace LQFarm
     /// pricing at harvest — reads to a player as "I slept and my crop lost value", and pushes
     /// them to time harvests, which is exactly wrong for a game of two-minute sessions.
     ///
-    /// Every crop finishes inside one window, so weather never cuts a harvest in half: the
-    /// longest crop is 470 s (329 s at level 30), against a 60-minute window.</summary>
+    /// Long crops now outlast a window (the longest grows 24 hours against 15 minutes), and that is fine
+    /// because of the snapshot: the weather it was planted in is the weather it is paid in.</summary>
     public static class WeatherSys
     {
-        public const long HourMs = 3_600_000L;
+        /// <summary>Length of one weather window: fifteen minutes (it was an hour). Weather is the
+        /// live variable on screen, and an hour between changes was long enough for a player to
+        /// stop looking at it.</summary>
+        public const long SlotMs = 15L * 60_000L;
 
         public static readonly WeatherDef[] All =
         {
@@ -57,16 +61,16 @@ namespace LQFarm
                 note = "Hạt giống rẻ hơn 10%" },
             new WeatherDef { id = Weather.Rain,    name = "Mưa",      weight = 22f,
                 grow = 0.80f, sell = 0.95f, xp = 0.95f, mutate = 1.10f, waterCut = 1f, hex = "#3E9BD8",
-                note = "Tự tưới: tặng sẵn một lượt khi gieo" },
+                note = "Trời tự tưới mỗi khi tới cữ" },
             new WeatherDef { id = Weather.Wind,    name = "Gió Lớn",  weight = 16f,
                 grow = 0.85f, sell = 0.90f, xp = 1.20f, mutate = 0.90f, waterCut = 1f, hex = "#37B5A6",
                 note = "8% cơ hội tự gieo lại khi thu hoạch" },
             new WeatherDef { id = Weather.Snow,    name = "Tuyết",    weight = 12f,
                 grow = 1.25f, sell = 1.30f, xp = 0.90f, mutate = 1.35f, waterCut = 1f, hex = "#8FD8FF",
-                note = "Chậm mà được giá — giờ để gieo cây dài" },
+                note = "Chậm mà được giá, hợp gieo cây dài" },
             new WeatherDef { id = Weather.Storm,   name = "Bão",      weight = 10f,
                 grow = 1.15f, sell = 0.80f, xp = 1.40f, mutate = 1.60f, waterCut = 1f, hex = "#8E64D8",
-                note = "KHÔNG bao giờ phá cây — chỉ làm chậm" },
+                note = "Chỉ làm chậm, trời tự tưới khi tới cữ" },
             new WeatherDef { id = Weather.Drought, name = "Hạn Hán",  weight = 10f,
                 grow = 1.30f, sell = 1.15f, xp = 0.80f, mutate = 0.70f, waterCut = 2f, hex = "#E2574C",
                 note = "Tưới nước hiệu quả gấp đôi" },
@@ -108,19 +112,19 @@ namespace LQFarm
 
         /// <summary>No storm and no drought in an account's first day. A new player meeting the
         /// worst weather before they understand the good weather has no frame of reference.</summary>
-        const long GraceMs = 24L * HourMs;
+        const long GraceMs = 24L * 3_600_000L;
 
-        public static long HourIndex(long nowMs) { return nowMs / HourMs; }
-        public static long HourStart(long hour) { return hour * HourMs; }
-        public static long HourEnd(long hour) { return (hour + 1) * HourMs; }
+        public static long SlotIndex(long nowMs) { return nowMs / SlotMs; }
+        public static long SlotStart(long slot) { return slot * SlotMs; }
+        public static long SlotEnd(long slot) { return (slot + 1) * SlotMs; }
 
         /// <summary>Milliseconds until the current window ends. The single most important number
         /// on screen: the multipliers are a static table a player memorises in a week, but this
         /// is the live variable, and it drives the only decision weather actually creates —
         /// plant now at these numbers, or wait for the reroll.</summary>
-        public static long MsLeft(long nowMs) { return HourEnd(HourIndex(nowMs)) - nowMs; }
+        public static long MsLeft(long nowMs) { return SlotEnd(SlotIndex(nowMs)) - nowMs; }
 
-        /// <summary>The weather at a given hour. Pure; safe to call for any hour, past or future.</summary>
+        /// <summary>The weather in a given window (<see cref="SlotIndex"/>). Pure; safe for any window, past or future.</summary>
         public static Weather At(PlayerState s, long hour)
         {
             if (s == null) return Weather.Sunny;
@@ -143,7 +147,7 @@ namespace LQFarm
             var prev = (Weather)255;                       // nothing forbidden at the start
             for (long h = hour - ChainDepth; h <= hour; h++)
             {
-                bool grace = createdAt > 0 && HourStart(h) < createdAt + GraceMs;
+                bool grace = createdAt > 0 && SlotStart(h) < createdAt + GraceMs;
                 prev = Pick(seed, h, level, grace, prev, h > hour - ChainDepth);
             }
             return prev;
@@ -189,16 +193,16 @@ namespace LQFarm
             return Weather.Sunny;
         }
 
-        public static Weather Now(PlayerState s) { return At(s, HourIndex(GS.Now)); }
-        public static Weather Next(PlayerState s) { return At(s, HourIndex(GS.Now) + 1); }
+        public static Weather Now(PlayerState s) { return At(s, SlotIndex(GS.Now)); }
+        public static Weather Next(PlayerState s) { return At(s, SlotIndex(GS.Now) + 1); }
 
-        /// <summary>The next window is revealed only near the end of the current one. An hour of
-        /// advance notice would let a player plan the whole day and stop opening the app; ten
-        /// minutes creates a decision instead ("hold the seeds, storm is coming").</summary>
-        public const long RevealMs = 10L * 60_000L;
+        /// <summary>The next window is revealed only near the end of the current one: the last five
+        /// minutes, a third of the window. Seeing further would let a player plan the whole day and
+        /// stop opening the app; a short notice creates a decision ("hold the seeds, storm is coming").</summary>
+        public const long RevealMs = 5L * 60_000L;
         public static bool NextRevealed(long nowMs) { return MsLeft(nowMs) <= RevealMs; }
 
-        /// <summary>Whether the player can see the next hour — normally only in the last ten
+        /// <summary>Whether the player can see the next window: normally only in its last five
         /// minutes, always while a forecast from the shop is running.</summary>
         public static bool Revealed(PlayerState s, long nowMs)
         {

@@ -91,8 +91,9 @@ namespace LQFarm.EditorTools
             {
                 long seed = SeedAt(si);
                 long created = 1_700_000_000_000L + si * 97_000_000L;
-                long h0 = WeatherSys.HourIndex(created);
-                for (long h = h0; h < h0 + 24; h++)
+                long h0 = WeatherSys.SlotIndex(created);
+                long day = 24L * 3_600_000L / WeatherSys.SlotMs;
+                for (long h = h0; h < h0 + day; h++)
                 {
                     var w = WeatherSys.At(seed, h, 30, created);
                     if (w == Weather.Storm || w == Weather.Drought)

@@ -27,8 +27,12 @@ namespace LQFarm.EditorTools
             PayConsumesCheapestFirst(fails);
             PayNeverOverfills(fails);
             UnlockIsOrdered(fails);
+            LayoutsHoldTheirShape(fails);
+            PlotSizesAreEnforced(fails);
+            OldSavesKeepTheirIslands(fails);
             PerksCompound(fails);
             BedsTouchInStraightRows(fails);
+            SceneryStandsInsideTheFence(fails);
 
             if (fails.Count == 0) Debug.Log("Đảo & ô đất OK — mọi bất biến đạt.");
             else
@@ -39,6 +43,34 @@ namespace LQFarm.EditorTools
         }
 
         static void Check(List<string> fails, bool ok, string what) { if (!ok) fails.Add(what); }
+
+        /// <summary>The yard rules, in grid cells (beds span ±2): every prop stands inside the
+        /// fence and off the beds, nothing tall stands in the front yard where it would cover a
+        /// crop, the fence stays on the grass, and a gate is wide enough for a bridge to enter.</summary>
+        static void SceneryStandsInsideTheFence(List<string> fails)
+        {
+            float F = IslandView.FenceCells;
+            Check(fails, F < IslandView.RimCells - 0.2f, $"hàng rào ({F}) sát mép đảo ({IslandView.RimCells})");
+            Check(fails, F > 2.6f, $"hàng rào ({F}) quá sát ô đất: rào trước sẽ che mép ô");
+            Check(fails, IslandView.GateX < IslandView.BridgeLandX && IslandView.BridgeLandX < IslandView.TipX,
+                  "cầu mây không cập vào khoảng giữa cổng và mũi đảo");
+            Check(fails, IslandView.GateCells * 2f * IslandView.StepY > 70f, "cổng quá hẹp cho cầu mây");
+
+            var yard = new List<(string art, float u, float v, float w)>(IslandView.Props);
+            foreach (var d in IslandView.Decor) yard.Add((d.art, d.u, d.v, d.w));
+            foreach (var d in IslandView.Decor)
+                foreach (var p in IslandView.Props)
+                    Check(fails, Mathf.Max(Mathf.Abs(d.u - p.u), Mathf.Abs(d.v - p.v)) > 0.8f,
+                          $"đồ trang trí {d.id} đứng chồng lên {p.art}");
+            foreach (var p in yard)
+            {
+                float reach = Mathf.Max(Mathf.Abs(p.u), Mathf.Abs(p.v));
+                Check(fails, reach < F - 0.2f, $"{p.art} ({p.u}, {p.v}) nằm ngoài hoặc sát hàng rào");
+                Check(fails, reach > 2.2f, $"{p.art} ({p.u}, {p.v}) đứng trên ô đất");
+                bool frontYard = p.u > 2f || p.v > 2f;
+                if (p.art != "rock" && p.art != "decor_roses") Check(fails, !frontYard, $"{p.art} cao mà đứng ở sân trước, sẽ che cây");
+            }
+        }
 
         static PlayerState Fresh(int lv = 1)
         {
@@ -64,9 +96,13 @@ namespace LQFarm.EditorTools
                 Check(fails, !string.IsNullOrEmpty(b.perk), $"{b.name}: không có đặc quyền");
             }
             Check(fails, IslandSys.Defs[0].freePlots == 6, "Vườn Nhà không tặng 6 ô");
+            // four plots handed over, or half the island when it only has four (Khổng Lồ)
             for (int i = 1; i < IslandSys.Defs.Length; i++)
-                Check(fails, IslandSys.Defs[i].freePlots == 4,
-                      $"{IslandSys.Defs[i].name}: tặng {IslandSys.Defs[i].freePlots} ô, thiết kế là 4");
+            {
+                int want = Mathf.Min(4, IslandSys.SlotCount(i) / 2);
+                Check(fails, IslandSys.Defs[i].freePlots == want,
+                      $"{IslandSys.Defs[i].name}: tặng {IslandSys.Defs[i].freePlots} ô, thiết kế là {want}");
+            }
         }
 
         /// <summary>The pager slot is 208 px wide with a chevron at each end. Eight characters is
@@ -110,7 +146,9 @@ namespace LQFarm.EditorTools
         }
 
         /// <summary>A tribute nobody can finish is a wall, not a goal. Measured against what the
-        /// farm can actually produce: sixteen plots, running the crop, for a day.</summary>
+        /// farm can actually produce: sixteen plots running the crop for one day of the reference
+        /// player's sessions (<see cref="EconomyModel"/>) — a 22-hour pineapple is harvested about once
+        /// a day, a tomato many times, so "hours of play" no longer means anything on its own.</summary>
         static void TributeIsReachable(List<string> fails)
         {
             for (int i = 1; i < IslandSys.Defs.Length; i++)
@@ -121,12 +159,9 @@ namespace LQFarm.EditorTools
                 {
                     var seed = GameData.Get(t.crop);
                     if (seed == null) continue;
-                    float grow = s.GrowTime(seed);
-                    // 16 plots, 8 hours of active play at this level
-                    float cycles = 8f * 3600f / Mathf.Max(1f, grow);
-                    float perDay = cycles * 16f * s.YieldOf(seed, 0);
+                    float perDay = EconomyModel.HarvestsPerDay(seed, s.GrowTime(seed)) * 16f * s.YieldOf(seed, 0);
                     Check(fails, t.need <= perDay,
-                          $"{d.name}: cần {t.need} {seed.name} nhưng một ngày cày chỉ ra {perDay:0}");
+                          $"{d.name}: cần {t.need} {seed.name} nhưng một ngày chơi trên 16 ô chỉ ra {perDay:0}");
                 }
             }
         }
@@ -136,7 +171,8 @@ namespace LQFarm.EditorTools
             for (int isl = 0; isl < IslandSys.Max; isl++)
             {
                 int prevPrice = -1, prevLv = 0;
-                for (int k = 0; k < IslandSys.PlotsPerIsland; k++)
+                int slots = IslandSys.SlotCount(isl);
+                for (int k = 0; k < slots; k++)
                 {
                     int price = IslandSys.PlotPrice(isl, k);
                     int lv = IslandSys.PlotLevel(isl, k);
@@ -151,44 +187,61 @@ namespace LQFarm.EditorTools
                 Check(fails, IslandSys.PlotPrice(isl, free) > 0,
                       $"đảo {isl}: ô đầu tiên phải mua lại miễn phí");
 
-                int first = IslandSys.PlotPrice(isl, free);
-                int last = IslandSys.PlotPrice(isl, IslandSys.PlotsPerIsland - 1);
-                float ratio = last / (float)Mathf.Max(1, first);
-                Check(fails, ratio > 10f && ratio < 60f,
-                      $"đảo {isl}: ô cuối đắt gấp {ratio:0.0} lần ô đầu — ngoài khoảng 10..60");
+                // a ladder needs rungs: the ratio is only a design rule on islands with many plots
+                if (slots - free >= 6)
+                {
+                    int first = IslandSys.PlotPrice(isl, free);
+                    int last = IslandSys.PlotPrice(isl, slots - 1);
+                    float ratio = last / (float)Mathf.Max(1, first);
+                    Check(fails, ratio > 10f && ratio < 60f,
+                          $"đảo {isl}: ô cuối đắt gấp {ratio:0.0} lần ô đầu — ngoài khoảng 10..60");
+                }
             }
         }
 
         /// <summary>Every plot must be under a day of income at the level it becomes buyable, or
         /// "mua ô tiếp theo" stops being the obvious thing to do with loose coins — which is the
-        /// only thing making levelling worth anything.</summary>
+        /// only thing making levelling worth anything.
+        ///
+        /// Income is MEASURED, not assumed: a day of the reference player's sessions
+        /// (<see cref="EconomyModel"/>) on the farm they have by then — every plot of the islands whose
+        /// gate is at or below the level, plus the plots of this island already bought — each growing
+        /// the crop that earns that plot the most in such a day. Crop margins only: contracts, missions
+        /// and chests are left out, so the real day is richer than this.</summary>
         static void PlotLadderIsAffordable(List<string> fails)
         {
             for (int isl = 0; isl < IslandSys.Max; isl++)
-                for (int k = IslandSys.Def(isl).freePlots; k < IslandSys.PlotsPerIsland; k++)
+                for (int k = IslandSys.Def(isl).freePlots; k < IslandSys.SlotCount(isl); k++)
                 {
                     int lv = IslandSys.PlotLevel(isl, k);
                     var s = Fresh(lv);
-
-                    // Income is MEASURED, not assumed. The first version of this test guessed
-                    // "60 cycles a day" and failed four islands by 5% — the guess was wrong, not
-                    // the prices. Cycle time comes from the crop the player would actually grow.
-                    float bestIncome = 0f;
-                    foreach (var seed in GameData.Seeds)
+                    float small = BestPlotDay(s, lv, false), big = BestPlotDay(s, lv, true);
+                    float income = 0f;
+                    for (int j = 0; j < IslandSys.Max; j++)
                     {
-                        if (seed.lv > lv) continue;
-                        int margin = s.HarvestValue(seed.id, 0) - seed.price;
-                        if (margin <= 0) continue;
-                        float grow = s.GrowTime(seed);
-                        float cycles = 8f * 3600f / Mathf.Max(1f, grow);   // 8 hours of play
-                        float income = cycles * 16f * margin;              // 16 plots
-                        if (income > bestIncome) bestIncome = income;
+                        if (IslandSys.Def(j).lv > lv || j > isl) continue;
+                        int plots = j == isl ? k : IslandSys.SlotCount(j);
+                        income += plots * (IslandSys.Def(j).layout == IslandLayout.Giant ? big : small);
                     }
 
                     int price = IslandSys.PlotPrice(isl, k);
-                    Check(fails, price <= bestIncome,
-                          $"đảo {isl} ô {k}: {price} xu ở cấp {lv}, quá một ngày thu nhập ({bestIncome:0})");
+                    Check(fails, price <= income,
+                          $"đảo {isl} ô {k}: {price} xu ở cấp {lv}, quá một ngày thu nhập ({income:0})");
                 }
+        }
+
+        /// <summary>What one plot earns in a day of the reference player's sessions with its best crop.</summary>
+        static float BestPlotDay(PlayerState s, int lv, bool big)
+        {
+            float best = 0f;
+            foreach (var seed in GameData.Seeds)
+            {
+                if (seed.lv > lv || seed.big != big) continue;
+                int margin = s.HarvestValue(seed.id, 0) - seed.price;
+                if (margin <= 0) continue;
+                best = Mathf.Max(best, margin * EconomyModel.HarvestsPerDay(seed, s.GrowTime(seed)));
+            }
+            return best;
         }
 
         static void FreePlotsAreDistinct(List<string> fails)
@@ -197,6 +250,9 @@ namespace LQFarm.EditorTools
             {
                 var seen = new HashSet<int>();
                 int n = 0;
+                for (int slot = 0; slot < IslandSys.PlotsPerIsland; slot++)
+                    if (IslandSys.StartsUnlocked(isl, slot))
+                        Check(fails, IslandSys.KindOf(isl, slot) != PlotKind.None, $"đảo {isl}: ô mở sẵn {slot} không phải đất");
                 for (int slot = 0; slot < IslandSys.PlotsPerIsland; slot++)
                     if (IslandSys.StartsUnlocked(isl, slot)) { n++; seen.Add(slot); }
                 Check(fails, n == IslandSys.Def(isl).freePlots,
@@ -212,13 +268,14 @@ namespace LQFarm.EditorTools
         {
             var s = Fresh(10);
             int top = Art.Elements.Length - 1;
-            s.AddProduce("corn", 0, 50);
-            s.AddProduce("corn", top, 5);
+            string crop = IslandSys.Def(1).tribute[0].crop;
+            s.AddProduce(crop, 0, 50);
+            s.AddProduce(crop, top, 5);
 
-            IslandSys.Pay(s, 1, "corn", 50);
+            IslandSys.Pay(s, 1, crop, 50);
 
-            s.store.TryGetValue("corn:" + top, out int legendsLeft);
-            s.store.TryGetValue("corn:0", out int plainLeft);
+            s.store.TryGetValue(crop + ":" + top, out int legendsLeft);
+            s.store.TryGetValue(crop + ":0", out int plainLeft);
             Check(fails, legendsLeft == 5, $"còn {legendsLeft}/5 quả huyền thoại sau khi nộp — đã tiêu mất");
             Check(fails, plainLeft == 0, $"còn {plainLeft} quả thường, đáng lẽ tiêu hết trước");
         }
@@ -296,6 +353,117 @@ namespace LQFarm.EditorTools
                 Check(fails, (IslandView.CellPos(i) - want).sqrMagnitude < eps,
                       $"ô {i} lệch khỏi hàng thẳng ({IslandView.CellPos(i)} thay vì {want})");
             }
+        }
+
+        /// <summary>Đảo Nước: two banks of eight beds with a river between them — each bank touches
+        /// itself, the banks never overlap the river band, and every bed stays inside the fence.
+        /// Khổng Lồ: four big beds that tile the field exactly.</summary>
+        static void LayoutsHoldTheirShape(List<string> fails)
+        {
+            int river = -1, giant = -1;
+            for (int i = 0; i < IslandSys.Defs.Length; i++)
+            {
+                if (IslandSys.Defs[i].layout == IslandLayout.River) river = i;
+                if (IslandSys.Defs[i].layout == IslandLayout.Giant) giant = i;
+            }
+            Check(fails, river == 1, $"Đảo Nước phải là đảo thứ 2 (đang ở {river})");
+            Check(fails, giant == 2, $"Khổng Lồ phải là đảo thứ 3 (đang ở {giant})");
+            Check(fails, IslandSys.Def(3).name == "Đảo Gió", "Đảo Gió phải đứng ngay sau Khổng Lồ");
+
+            if (river >= 0)
+            {
+                Check(fails, IslandSys.SlotCount(river) == 16, "Đảo Nước không đủ 16 ô");
+                for (int i = 0; i < GS.PlotCount; i++)
+                {
+                    var c = IslandSys.SlotCell(river, i);
+                    // a bed spans half a cell either side of its centre
+                    Check(fails, Mathf.Abs(c.y) - 0.5f >= IslandSys.RiverHalf - 0.001f, $"Đảo Nước ô {i} lấn xuống sông (v = {c.y})");
+                    Check(fails, Mathf.Abs(c.y) + 0.5f <= IslandView.FenceCells, $"Đảo Nước ô {i} ra ngoài hàng rào (v = {c.y})");
+                    for (int j = i + 1; j < GS.PlotCount; j++)
+                    {
+                        var d = IslandSys.SlotCell(river, j) - c;
+                        bool sameBank = (i / 4 < 2) == (j / 4 < 2);
+                        bool neighbour = Mathf.Abs(i / 4 - j / 4) + Mathf.Abs(i % 4 - j % 4) == 1;
+                        Check(fails, Mathf.Abs(d.x) >= 0.999f || Mathf.Abs(d.y) >= 0.999f, $"Đảo Nước ô {i} và {j} chồng nhau");
+                        if (sameBank && neighbour)
+                            Check(fails, Mathf.Abs(d.magnitude - 1f) < 0.001f, $"Đảo Nước ô {i} và {j} cùng bờ mà không khít");
+                    }
+                }
+            }
+            if (giant >= 0)
+            {
+                Check(fails, IslandSys.SlotCount(giant) == 4, $"Khổng Lồ có {IslandSys.SlotCount(giant)} ô, thiết kế là 4");
+                var s = Fresh(30);
+                foreach (var p in s.islands[giant].plots)
+                    Check(fails, p.none || p.big, "Khổng Lồ có ô nhỏ");
+                var corners = new List<Vector2>();
+                for (int i = 0; i < GS.PlotCount; i++)
+                    if (IslandSys.KindOf(giant, i) == PlotKind.Big) corners.Add(IslandSys.SlotCell(giant, i));
+                foreach (var a in corners)
+                {
+                    Check(fails, Mathf.Abs(Mathf.Abs(a.x) - 1f) < 0.001f && Mathf.Abs(Mathf.Abs(a.y) - 1f) < 0.001f,
+                          $"ô lớn đặt lệch ({a}): 4 ô lớn phải phủ khít cánh đồng");
+                }
+            }
+        }
+
+        /// <summary>Trees only in big plots, small crops only in small ones, and a big plot is never
+        /// sold as a small one's worth.</summary>
+        static void PlotSizesAreEnforced(List<string> fails)
+        {
+            var s = Fresh(30);
+            s.EnsureIsland(2).unlocked = true;
+            s.SyncPlots();
+            s.clock.lastSeenUtc = (long)(System.DateTime.UtcNow - new System.DateTime(1970, 1, 1)).TotalMilliseconds;
+            var small = s.islands[0].plots.Find(p => !p.locked && !p.none);
+            var big = s.islands[2].plots.Find(p => !p.locked && p.big);
+            Check(fails, big != null, "Khổng Lồ mở mà không có ô lớn nào sẵn");
+            s.AddSeed("apple", 2); s.AddSeed("carrot", 2);
+            int apples = s.seeds["apple"], carrots = s.seeds["carrot"];
+            Check(fails, !PlotLogic.Plant(s, s, small, "apple") && s.seeds["apple"] == apples, "trồng được táo ở ô nhỏ (hoặc mất hạt)");
+            if (big != null)
+            {
+                Check(fails, !PlotLogic.Plant(s, s, big, "carrot") && s.seeds["carrot"] == carrots, "trồng được cà rốt ở ô lớn (hoặc mất hạt)");
+                Check(fails, PlotLogic.Plant(s, s, big, "apple"), "không trồng được táo ở ô lớn");
+            }
+            int bigSeeds = 0;
+            foreach (var sd in GameData.Seeds)
+                if (sd.big) { bigSeeds++; Check(fails, Resources.Load<Sprite>("Art/crops_gen/" + sd.art + "_3") != null, $"{sd.name}: thiếu hình"); }
+            Check(fails, bigSeeds == 4, $"có {bigSeeds} cây lớn, thiết kế là 4 (táo, cam, chuối, dừa)");
+            Check(fails, GameData.Get("apple") != null && GameData.Get("apple").lv <= IslandSys.Def(2).lv,
+                  "cây lớn đầu tiên mở sau cả Khổng Lồ: đảo mở ra không có gì để trồng");
+            Check(fails, s.BuyPlot(2, s.islands[2].plots.FindIndex(p => p.none)) == false, "mua được ô không phải đất");
+        }
+
+        /// <summary>A save written before the two new islands keeps every island it had under the
+        /// same name, and a player already past them gets them opened.</summary>
+        static void OldSavesKeepTheirIslands(List<string> fails)
+        {
+            var s = new PlayerState();
+            s.NewGame();
+            s.islands.Clear();
+            s.islands.Add(new Island(0, true));
+            var gio = new Island(1, true) { unlockedAt = 123 };
+            gio.plots.Add(new Plot { locked = false, crop = "corn" });
+            s.islands.Add(gio);
+            s.islands.Add(new Island(2, false) { tribute = new Dictionary<string, int> { { "eggplant", 5 } } });
+            SaveIO.MigrateIslands(s, 0);
+            s.SyncPlots();
+            Check(fails, s.islands.Count >= 5, $"sau khi chuyển còn {s.islands.Count} đảo");
+            Check(fails, s.islands[3].plots[0].crop == "corn" && s.islands[3].unlocked, "Đảo Gió cũ không còn ở vị trí Đảo Gió");
+            Check(fails, s.islands[4].tribute != null && s.islands[4].tribute["eggplant"] == 5, "cống nạp Đảo Băng cũ bị lạc");
+            Check(fails, s.islands[1].unlocked && s.islands[2].unlocked, "người đã có Đảo Gió phải được mở sẵn Đảo Nước và Khổng Lồ");
+            int before = s.islands.Count;
+            SaveIO.MigrateIslands(s, SaveIO.IslandsVersion);
+            Check(fails, s.islands.Count == before, "chuyển đổi chạy lại trên file đã chuyển");
+
+            var fresh = new PlayerState();
+            fresh.NewGame();
+            fresh.islands.Clear();
+            fresh.islands.Add(new Island(0, true));
+            fresh.islands.Add(new Island(1, false));
+            SaveIO.MigrateIslands(fresh, 0);
+            Check(fails, !fresh.islands[1].unlocked, "người chưa mở Đảo Gió lại được tặng Đảo Nước");
         }
 
         static void PerksCompound(List<string> fails)

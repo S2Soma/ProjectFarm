@@ -63,6 +63,12 @@ namespace LQFarm
 
         public static void Save(PlayerState s)
         {
+            if (s == null || !s.loaded)
+            {
+                Debug.LogWarning("Bỏ qua lưu: trạng thái chưa được nạp từ file (Unity vừa biên dịch lại giữa lúc Play?). " +
+                                 "File lưu cũ được giữ nguyên. Thoát Play rồi vào lại.");
+                return;
+            }
             try
             {
                 s.clock.savedAtUtc = GS.Now;
@@ -180,6 +186,44 @@ namespace LQFarm
             try { if (File.Exists(Path)) File.Delete(Path); } catch (Exception) { }
         }
 
+        // ---- cloud sync: the file as text, without loading it into a PlayerState ----
+        /// <summary>The save on disk as written, or null when there is none.</summary>
+        public static string ReadRaw()
+        {
+            try { return File.Exists(Path) ? File.ReadAllText(Path) : null; }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>Replace the save on disk with a file that came from the account. Done before the
+        /// game loads it (or right before a restart), never under a running farm.</summary>
+        public static bool WriteRaw(string json)
+        {
+            try
+            {
+                string tmp = Path + ".tmp";
+                File.WriteAllText(tmp, json);
+                if (File.Exists(Path)) File.Delete(Path);
+                File.Move(tmp, Path);
+                return true;
+            }
+            catch (Exception e) { Debug.LogWarning("Không ghi được file lưu tải về: " + e.Message); return false; }
+        }
+
+        /// <summary>Keep a copy of a save that is about to be overwritten somewhere else (the
+        /// account's version, when the player chose this device's).</summary>
+        public static void BackupRaw(string tag, string json)
+        {
+            try { if (!string.IsNullOrEmpty(json)) File.WriteAllText(Path + "." + tag + ".bak", json); }
+            catch (Exception) { }
+        }
+
+        /// <summary>Copy the save aside before sync replaces it: lqfarm.save.json.&lt;tag&gt;.bak.</summary>
+        public static void Backup(string tag)
+        {
+            try { if (File.Exists(Path)) File.Copy(Path, Path + "." + tag + ".bak", true); }
+            catch (Exception) { }
+        }
+
         // ================================================================
         // mapping
         // ================================================================
@@ -198,6 +242,8 @@ namespace LQFarm
             var d = s.loadedEcho ?? (s.loadedEcho = new SaveDto());
 
             d.v = Version;
+            d.islandsV = IslandsVersion;
+            d.econV = EconomyVersion;
             d.minV = MinVersion;
             d.worldSeed = s.worldSeed.ToString("x16", CultureInfo.InvariantCulture);
             d.clock = s.clock;
@@ -218,6 +264,7 @@ namespace LQFarm
             pr.daily = s.daily;
             pr.dailyBucket = s.day;
             pr.buffMutateUntil = s.buffMutateUntil;
+            pr.buffXpUntil = s.buffXpUntil;
             pr.forecastUntil = s.forecastUntil;
             pr.greenhouse = s.greenhouse;
             pr.contracts = s.contracts;
@@ -228,11 +275,20 @@ namespace LQFarm
             pr.collected = new List<string>(s.collected);
             pr.claimedSets = new List<string>(s.claimedSets);
             pr.claimedMilestones = new List<int>(s.claimedMs);
+            pr.tutorial = s.tutorial;
+            pr.tips = new List<string>(s.tipsSeen);
 
             var so = d.social ?? (d.social = new SocialDto());
             so.visited = new List<string>(s.visited);
             so.shopBought = new List<string>(s.shopBought);
+            so.equipped = new Dictionary<string, string>(s.equipped);
+            so.redeemed = new List<string>(s.redeemedCodes);
             so.stealBudgetLeft = s.stealLeft;
+
+            var pe = d.pets ?? (d.pets = new PetsDto());
+            pe.owned = new Dictionary<string, int>(s.pets);
+            pe.active = s.petActive;
+            pe.eggs = s.petEggs; pe.pity = s.petPity; pe.snacks = s.petSnacks; pe.free = s.petFreeEggs;
 
             var meta = d.meta ?? (d.meta = new MetaDto());
             meta.build = Application.version;
@@ -289,6 +345,7 @@ namespace LQFarm
                     s.islands.Add(target);
                 }
             if (s.islands.Count == 0) s.islands.Add(new Island(0, true));
+            MigrateIslands(s, d.islandsV);
 
             var inv = d.inventory ?? new InventoryDto();
             Replace(s.seeds, inv.seeds);
@@ -302,6 +359,7 @@ namespace LQFarm
             Replace(s.daily, pr.daily);
             s.day = pr.dailyBucket;
             s.buffMutateUntil = pr.buffMutateUntil;
+            s.buffXpUntil = pr.buffXpUntil;
             s.forecastUntil = pr.forecastUntil;
             s.greenhouse = pr.greenhouse;
             s.contracts.Clear();
@@ -313,13 +371,89 @@ namespace LQFarm
             Replace(s.collected, pr.collected);
             Replace(s.claimedSets, pr.claimedSets);
             Replace(s.claimedMs, pr.claimedMilestones);
+            s.tutorial = pr.tutorial ?? "";
+            Replace(s.tipsSeen, pr.tips);
 
             var so = d.social ?? new SocialDto();
             Replace(s.visited, so.visited);
             Replace(s.shopBought, so.shopBought);
+            s.equipped.Clear();
+            if (so.equipped != null) foreach (var kv in so.equipped) s.equipped[kv.Key] = kv.Value;
+            Replace(s.redeemedCodes, so.redeemed);
+            Cosmetics.MigrateLegacy(s);
             s.stealLeft = so.stealBudgetLeft;
 
+            var pe = d.pets ?? new PetsDto();
+            s.pets.Clear();
+            if (pe.owned != null) foreach (var kv in pe.owned) if (PetSys.Def(kv.Key) != null) s.pets[kv.Key] = Mathf.Clamp(kv.Value, 1, PetSys.MaxLevel);
+            s.petActive = pe.active ?? "";
+            s.petEggs = pe.eggs; s.petPity = pe.pity; s.petSnacks = pe.snacks; s.petFreeEggs = Mathf.Max(0, pe.free);
+
             s.stats = d.stats ?? new Stats();
+
+            // last: it reads the level, the plots and the islands the lines above restored
+            MigrateEconomy(s, d.econV);
+        }
+
+        public const int IslandsVersion = 2;
+
+        /// <summary>Two islands went in after Vườn Nhà. An older list is [Vườn Nhà, Đảo Gió, Đảo Băng…];
+        /// the new islands are slotted in at 1 and 2 so every island the player owns keeps its name,
+        /// plots and crops. Someone who already had Đảo Gió is past both newcomers in the game's order,
+        /// so they get them opened — asking a level-20 player to go back and pay a level-3 tribute
+        /// would be a toll on something they had already earned.</summary>
+        public static void MigrateIslands(PlayerState s, int islandsV)
+        {
+            if (islandsV >= IslandsVersion || s.islands.Count <= 1) return;
+            bool pastThem = s.islands[1].unlocked;
+            long when = pastThem ? s.islands[1].unlockedAt : 0;
+            s.islands.Insert(1, new Island(1, pastThem) { unlockedAt = when });
+            s.islands.Insert(2, new Island(2, pastThem) { unlockedAt = when });
+            for (int i = 0; i < s.islands.Count; i++) s.islands[i].id = i;
+        }
+
+        public const int EconomyVersion = 1;
+
+        /// <summary>Carry a farm from the old economy into this one, keeping its place on the curve.
+        ///
+        /// 2026-09-15 made crops take 2 minutes to 24 hours and re-priced every level: level 12 went from
+        /// 26.000 XP and 55.000 coins to 80.000 and 900.000. A farm that had saved up 286.400 coins — five
+        /// of its old levels — suddenly had a third of one, and its XP bar was a sliver. So what the player
+        /// HOLDS is rescaled by how much the thing it is for got dearer:
+        ///
+        ///  - coins × (new cost of the next level ÷ old cost): the same number of "levels in the bank";
+        ///  - XP × (new XP for the next level ÷ old): the bar stays exactly as full;
+        ///  - energy is kept, below one chest (the goal is computed differently now and must not pay out).
+        ///
+        /// Nothing else holds an old-scale amount: contract, mission and chest rewards are computed from
+        /// UNIT when they are claimed, seeds and produce are counts, tribute is counted in fruits, and a
+        /// plot already growing keeps its stored duration and finishes under the old watering rule
+        /// (<see cref="WaterSys.BaseCut"/>). Gift-code wealth is not special: 22 tỷ is simply rescaled
+        /// like any other balance and stays rich.
+        ///
+        /// Runs once: the file is written back with <see cref="SaveDto.econV"/> = current. A file with no
+        /// version key that already has a plot planted under per-crop watering (<c>waterSec</c> &gt; 0) was
+        /// written by a build that had the new economy before the key existed, and is left alone.</summary>
+        public static void MigrateEconomy(PlayerState s, int econV)
+        {
+            if (econV >= EconomyVersion) return;
+            foreach (var isl in s.islands)
+                foreach (var p in isl.plots)
+                    if (p != null && p.waterSec > 0f) return;
+
+            GameData.LegacyLevel(s.lv, out int oldXp, out int oldCost);
+            var now = GameData.Level(s.lv);
+            double xpScale = now.xpNeed / (double)Mathf.Max(1, oldXp);
+            double coinScale = now.cost / (double)Mathf.Max(1, oldCost);
+            s.xp = ScaleLong(s.xp, xpScale);
+            s.coin = ScaleLong(s.coin, coinScale);
+            s.energy = System.Math.Max(0L, System.Math.Min(s.energy, s.EnergyGoal - 1L));
+        }
+
+        static long ScaleLong(long v, double k)
+        {
+            double r = System.Math.Round(System.Math.Max(0L, v) * k);
+            return r >= long.MaxValue / 2 ? long.MaxValue / 2 : (long)r;
         }
 
         static long ParseSeed(string hex)
@@ -365,6 +499,15 @@ namespace LQFarm
         /// "not a version this reader knows", which routes to quarantine.</summary>
         public int v;
         public int minV;
+        /// <summary>The island order the file was written in. Absent (0) or 1: before Đảo Nước and
+        /// Đảo Khổng Lồ were inserted at 1 and 2 (2026-09-15). Added without a version bump — an old
+        /// reader ignores it, and this reader remaps an old list on load.</summary>
+        public int islandsV;
+        /// <summary>The economy the numbers in this file belong to (<see cref="SaveIO.EconomyVersion"/>).
+        /// Absent (0): written before crops ran to 24 hours (2026-09-15), when a level cost a sixteenth of
+        /// what it does now. Rescaled once on load (<see cref="SaveIO.MigrateEconomy"/>); no version bump,
+        /// an older reader ignores the key.</summary>
+        public int econV;
         public string worldSeed;
         public Clock clock;
         public PlayerDto player;
@@ -373,6 +516,8 @@ namespace LQFarm
         public ChestDto chests;
         public ProgressDto progress;
         public SocialDto social;
+        /// <summary>Thú cưng. Added without a version bump: an older save has no pets.</summary>
+        public PetsDto pets;
         public Stats stats;
         public MetaDto meta;
 
@@ -386,7 +531,8 @@ namespace LQFarm
         public string displayName;
         public int level = 1;
         public long xp;
-        public int coin;
+        /// <summary>Widened from int (a save written by an older build still reads).</summary>
+        public long coin;
         public long energy;
         [JsonExtensionData] public IDictionary<string, JToken> _x;
     }
@@ -427,6 +573,7 @@ namespace LQFarm
         public Dictionary<string, TaskRec> daily = new Dictionary<string, TaskRec>();
         public long dailyBucket;
         public long buffMutateUntil;
+        public long buffXpUntil;
         public long forecastUntil;
         public int greenhouse;
         public List<MissionRec> contracts = new List<MissionRec>();
@@ -437,6 +584,10 @@ namespace LQFarm
         public List<string> collected = new List<string>();
         public List<string> claimedSets = new List<string>();
         public List<int> claimedMilestones = new List<int>();
+        /// <summary>Tutorial step name and tips shown. Added without a version bump: an older
+        /// save has neither, which reads as "predates the tutorial" (see PlayerState.tutorial).</summary>
+        public string tutorial;
+        public List<string> tips = new List<string>();
         [JsonExtensionData] public IDictionary<string, JToken> _x;
     }
 
@@ -445,7 +596,23 @@ namespace LQFarm
     {
         public List<string> visited = new List<string>();
         public List<string> shopBought = new List<string>();
+        /// <summary>Worn cosmetics, slot → id. Added without a version bump: an older save simply
+        /// has none, which is exactly right.</summary>
+        public Dictionary<string, string> equipped = new Dictionary<string, string>();
+        /// <summary>Gift codes already redeemed on this farm. Added without a version bump.</summary>
+        public List<string> redeemed = new List<string>();
         public int stealBudgetLeft = 20;
+        [JsonExtensionData] public IDictionary<string, JToken> _x;
+    }
+
+    [Preserve]
+    public class PetsDto
+    {
+        public Dictionary<string, int> owned = new Dictionary<string, int>();
+        public string active = "";
+        public int eggs, pity, snacks;
+        /// <summary>Free eggs in hand (gift codes). Added without a version bump.</summary>
+        public int free;
         [JsonExtensionData] public IDictionary<string, JToken> _x;
     }
 

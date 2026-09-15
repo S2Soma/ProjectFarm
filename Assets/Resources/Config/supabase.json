@@ -1,0 +1,5 @@
+{
+  "_readme": "Điền 2 dòng dưới từ Supabase Dashboard > Project Settings > API. CHỈ dùng anon/publishable key, KHÔNG BAO GIỜ dán service_role/secret key vào đây (file này nằm trong bản build, ai giải nén APK cũng đọc được).",
+  "url": "https://lwkrnefocladtosneqlq.supabase.co",
+  "anonKey": "sb_publishable_k7WiR_mLMmkSACv7LlFJgQ_ZGpligX3"
+}

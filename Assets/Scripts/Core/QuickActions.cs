@@ -1,6 +1,6 @@
 namespace LQFarm
 {
-    /// <summary>The three bulk verbs on the bottom bar, and the level each one unlocks at.
+    /// <summary>The three bulk verbs, and the level each one unlocks at.
     ///
     /// Staggered on purpose. A new player learns the farm one plot at a time — tapping a ripe
     /// crop, choosing a seed for an empty bed, catching a watering window — and a "do everything"
@@ -29,6 +29,15 @@ namespace LQFarm
             if (level == PlantLevel) return "Gieo nhanh";
             if (level == WaterLevel) return "Tưới nhanh";
             return null;
+        }
+
+        /// <summary>The unlock to announce on the level-up card and the upgrade preview: only verbs
+        /// that have a HUD button. Gieo nhanh still unlocks (<see cref="PlantUnlocked"/> is game
+        /// logic and stays), but the HUD no longer has a Gieo button — an empty bed is planted by
+        /// tapping it — so promising "Mở khoá Gieo nhanh" would name something nobody can find.</summary>
+        public static string AnnouncedAt(int level)
+        {
+            return level == PlantLevel ? null : UnlockedAt(level);
         }
     }
 }

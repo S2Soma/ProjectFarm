@@ -1,0 +1,557 @@
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+
+namespace LQFarm
+{
+    /// <summary>The sky behind the archipelago: a sky archipelago above a sea of clouds, lit by the
+    /// time of day and tinted by the weather.
+    ///
+    /// It replaces a flat painted sea with foam ovals under islands that float — a picture that was
+    /// neither a sky world nor a sea world — a blue dome of a hill that read as a planet, and
+    /// clouds sliced flat by the horizon. Everything here is a greyscale-lit sprite or a plain quad
+    /// coloured by vertex colour, so one set of art serves noon, dusk and night.
+    ///
+    /// Layers, back to front (reference units, horizon 430 up from the bottom):
+    ///   sky (3 gradient quads) · stars · sun · moon · cirrus · cumulus · sea base · far cloud-sea ·
+    ///   stratus wisps · horizon glow · sheen · mid cloud-sea · near cloud-sea · vignette
+    /// The sun and moon sit before the sea base, so the horizon hides them as they set.
+    ///
+    /// It is also the composer: once a second (every frame while the weather is blending) it
+    /// samples <see cref="DayCycle"/>, folds in <see cref="WeatherFx.Blended"/>, paints the sky,
+    /// and pushes the light down to the islands through the readability floor.</summary>
+    public class SkyView : MonoBehaviour
+    {
+        const float Hz = 430f;
+
+        RectTransform _root;
+        WeatherFx _weather;
+        ArchipelagoView _world;
+
+        VGradient _skyLow, _skyMid, _skyTop;
+        RectTransform _starsNode;
+        readonly List<Star> _stars = new List<Star>();
+        Image _sunHalo, _sunGlow, _sunRays, _sun, _moonHalo, _moonGlow, _moon;
+        readonly List<Islet> _islets = new List<Islet>();
+        readonly List<Firefly> _flies = new List<Firefly>();
+        RectTransform _flyNode;
+
+        class Islet { public Image im, glow, dot; public float x01, y, w, bobPeriod, phase; public VGradient g; }
+        class Firefly { public RectTransform rt; public Image core, glow; public Vector2 pos, vel; public float period, phase; }
+        readonly List<Cloud> _clouds = new List<Cloud>();
+        VGradient _sea;
+        readonly List<Band> _bands = new List<Band>();
+        Image _horizonGlow, _sheen, _vignette;
+
+        class Star { public Image im; public float x01, y, baseA, period, phase; public bool glint; }
+        class Cloud { public Image im; public VGradient g; public float w, bottom, lerp, alpha, drift, parallax, start01, x; }
+        class Band { public Image a, b; public VGradient ga, gb; public float top, h, drift, parallax, lerp, dim, x; }
+
+        float _nextPaint, _lastWidth = -1f;
+        SkyPalette _p;
+        Color _pushedLand = new Color(-1, 0, 0), _pushedCrop;
+        float _pushedLantern = -1f;
+
+        // ============================================================
+        // build
+        // ============================================================
+        public void Build(RectTransform layer)
+        {
+            _root = layer;
+
+            _skyLow = SkyQuad("skyLow", Hz - 2f, Hz + 70f, false);
+            _skyMid = SkyQuad("skyMid", Hz + 70f, Hz + 220f, false);
+            _skyTop = SkyQuad("skyTop", Hz + 220f, 0f, true);
+
+            BuildStars();
+
+            _sunHalo = Glow("sunHalo", 900f);
+            _sunRays = Sprite("sunRays", "Art/sky/sun_rays", 420f);
+            _sunRays.color = Color.clear;
+            _sunGlow = Glow("sunGlow", 360f);
+            _sun = Sprite("sun", "Art/sky/sun_disc", 96f);
+            _moonHalo = Glow("moonHalo", 760f);
+            _moonGlow = Glow("moonGlow", 300f);
+            _moon = Sprite("moon", "Art/sky/moon_disc", 72f);
+
+            // high, thin cirrus streaks behind everything: the sky has a ceiling far above the heaps
+            AddBand("cirrus", Hz + 340f, 160f, 7f, 0.012f, 0.35f);
+
+            // id, sprite, width, bottom, lerp to horizon, alpha, drift, parallax, start, mirrored
+            AddCloud("c", 150f, Hz + 18f, 0.45f, 1.00f, 4.0f, 0.040f, 0.12f, false);
+            AddCloud("a", 210f, Hz + 46f, 0.35f, 1.00f, 5.0f, 0.050f, 0.52f, false);
+            AddCloud("b", 170f, Hz + 30f, 0.40f, 1.00f, 4.5f, 0.045f, 0.80f, false);
+            // The two near clouds were 360 and 280 wide: at 1.5x on a 1080p phone a 540 px cloud
+            // parked behind the wallet and swallowed the sun.
+            AddCloud("a", 250f, Hz + 118f, 0.10f, 0.96f, 8.0f, 0.090f, 0.30f, true);
+            AddCloud("c", 200f, Hz + 176f, 0.05f, 0.92f, 10.0f, 0.110f, 0.95f, true);
+
+            var seaImg = UIKit.Img(_root, null, Color.white, "seaBase");
+            seaImg.rectTransform.anchorMin = new Vector2(0, 0);
+            seaImg.rectTransform.anchorMax = new Vector2(1, 0);
+            seaImg.rectTransform.pivot = new Vector2(0.5f, 0);
+            seaImg.rectTransform.offsetMin = new Vector2(-4, -60);
+            seaImg.rectTransform.offsetMax = new Vector2(4, Hz + 2);
+            _sea = seaImg.gameObject.AddComponent<VGradient>();
+
+            // far islets sit just above the horizon, their cliffs sinking into the far cloud band
+            BuildIslets();
+            // Aerial perspective: the farther a layer, the more it takes the horizon's colour (0.60 /
+            // 0.26 / 0), and the art itself is hazier and softer the farther it is (gen_sky.py band).
+            AddBand("sea_far", Hz + 8f, 150f, 3f, 0.03f, 0.60f);
+            // stratus wisps drifting between the far and mid heaps: air you can see through
+            AddBand("sea_wisps", Hz - 16f, 140f, 12f, 0.045f, 0.32f);
+
+            _horizonGlow = UIKit.Img(_root, Theme.Glow(), Color.clear, "horizonGlow");
+            _horizonGlow.rectTransform.anchorMin = _horizonGlow.rectTransform.anchorMax = Vector2.zero;
+            _horizonGlow.rectTransform.sizeDelta = new Vector2(1800f, 220f);
+            _sheen = UIKit.Img(_root, Theme.Glow(), Color.clear, "sheen");
+            _sheen.rectTransform.anchorMin = _sheen.rectTransform.anchorMax = Vector2.zero;
+            _sheen.rectTransform.sizeDelta = new Vector2(320f, 280f);
+
+            // and the nearer a layer, the darker: a foreground in its own shadow is what pushes the
+            // far heaps back, most of all at night when the colours alone barely separate them
+            AddBand("sea_mid", Hz - 96f, 230f, 6f, 0.06f, 0.26f, 0.06f);
+            AddBand("sea_near", 190f, 320f, 10f, 0.11f, 0f, 0.16f);
+
+            _vignette = UIKit.Img(_root, Theme.Vignette(), Color.white, "vignette");
+            _vignette.rectTransform.Stretch(-80, -80, -80, -80);
+
+            _nextPaint = 0f;
+        }
+
+        /// <summary>Hooked up after the world and the weather exist.</summary>
+        public void Bind(WeatherFx weather, ArchipelagoView world)
+        {
+            _weather = weather;
+            _world = world;
+            _nextPaint = 0f;
+            if (weather != null && weather.Air != null) BuildFireflies(weather.Air);
+        }
+
+        /// <summary>Three little islands far off near the horizon, so the archipelago is part of a
+        /// wider sky world rather than the only land in it. They are the islands' own paintings,
+        /// small and lost in haze, each bobbing on its own slow period; at night each shows one
+        /// lantern.</summary>
+        void BuildIslets()
+        {
+            var specs = new (int island, float x01, float y, float w, bool mirror, float period)[]
+            {
+                // low enough that the far cloud band swallows their cliffs: standing clear of it
+                // they read as square chips pinned to the sky
+                (1, 0.20f, Hz - 2f, 76f, false, 7f),
+                (2, 0.62f, Hz + 6f, 50f, true, 9f),
+                (5, 0.87f, Hz - 8f, 100f, true, 11f),
+            };
+            var rng = new System.Random(77);
+            foreach (var sp in specs)
+            {
+                var im = UIKit.Img(_root, Art.Load("Art/islands/island_" + sp.island), Color.white, "islet");
+                var rt = im.rectTransform;
+                rt.anchorMin = rt.anchorMax = Vector2.zero;
+                rt.pivot = new Vector2(0.5f, 0.5f);
+                rt.sizeDelta = new Vector2(sp.w, sp.w * 0.639f);
+                if (sp.mirror) rt.localScale = new Vector3(-1f, 1f, 1f);
+                var glow = UIKit.Img(_root, Theme.Glow(), Color.clear, "isletGlow");
+                glow.rectTransform.anchorMin = glow.rectTransform.anchorMax = Vector2.zero;
+                glow.rectTransform.sizeDelta = new Vector2(18f, 18f);
+                var dot = UIKit.Img(_root, Theme.Circle(), Color.clear, "isletLamp");
+                dot.rectTransform.anchorMin = dot.rectTransform.anchorMax = Vector2.zero;
+                dot.rectTransform.sizeDelta = new Vector2(3f, 3f);
+                _islets.Add(new Islet
+                {
+                    im = im, glow = glow, dot = dot, g = im.gameObject.AddComponent<VGradient>(),
+                    x01 = sp.x01, y = sp.y, w = sp.w, bobPeriod = sp.period, phase = (float)rng.NextDouble() * 6.28f,
+                });
+            }
+        }
+
+        /// <summary>Fireflies over the farm on a clear night. They live in the air layer, over the
+        /// world and under the HUD, and only at farm zoom — from the whole-map view they would be
+        /// a scatter of dust.</summary>
+        void BuildFireflies(RectTransform air)
+        {
+            _flyNode = UIKit.Node("fireflies", air);
+            _flyNode.Stretch();
+            var rng = new System.Random(311);
+            for (int i = 0; i < 12; i++)
+            {
+                var node = UIKit.Node("firefly", _flyNode);
+                node.anchorMin = node.anchorMax = Vector2.zero;
+                node.sizeDelta = Vector2.one;
+                var glow = UIKit.Img(node, Theme.Glow(), Theme.Hex("#C8F25A").Alpha(0f), "glow");
+                glow.rectTransform.Anchor(UIKit.Center, Vector2.zero, new Vector2(26f, 26f));
+                var core = UIKit.Img(node, Theme.Circle(), Theme.Hex("#EAFF8A").Alpha(0f), "core");
+                core.rectTransform.Anchor(UIKit.Center, Vector2.zero, new Vector2(4.5f, 4.5f));
+                double ang = rng.NextDouble() * 6.28;
+                float sp = 8f + (float)rng.NextDouble() * 6f;
+                _flies.Add(new Firefly
+                {
+                    rt = node, core = core, glow = glow,
+                    pos = new Vector2((float)rng.NextDouble(), (float)rng.NextDouble()),
+                    vel = new Vector2(Mathf.Cos((float)ang), Mathf.Sin((float)ang)) * sp,
+                    period = 2.5f + (float)rng.NextDouble() * 2f,
+                    phase = (float)rng.NextDouble() * 6.28f,
+                });
+            }
+            _flyNode.gameObject.SetActive(false);
+        }
+
+        float _fliesA;
+
+        void StepFireflies(float dt, float t)
+        {
+            if (_flyNode == null) return;
+            bool zoomedIn = _world == null || _world.Camera == null || _world.Camera.Ratio >= 0.59f;
+            bool on = _fliesA > 0.01f && zoomedIn;
+            if (_flyNode.gameObject.activeSelf != on) _flyNode.gameObject.SetActive(on);
+            if (!on) return;
+            var size = _flyNode.rect.size;
+            foreach (var f in _flies)
+            {
+                // wander: turn a little each frame, keep inside the middle of the screen
+                float turn = Mathf.Sin(t * 0.7f + f.phase * 3f) * 1.4f * dt;
+                f.vel = new Vector2(f.vel.x * Mathf.Cos(turn) - f.vel.y * Mathf.Sin(turn), f.vel.x * Mathf.Sin(turn) + f.vel.y * Mathf.Cos(turn));
+                f.pos += new Vector2(f.vel.x / Mathf.Max(1f, size.x), f.vel.y / Mathf.Max(1f, size.y)) * dt;
+                if (f.pos.x < 0.15f || f.pos.x > 0.85f) f.vel.x = Mathf.Abs(f.vel.x) * (f.pos.x < 0.15f ? 1f : -1f);
+                if (f.pos.y < 0.08f || f.pos.y > 0.70f) f.vel.y = Mathf.Abs(f.vel.y) * (f.pos.y < 0.08f ? 1f : -1f);
+                f.rt.anchoredPosition = new Vector2(f.pos.x * size.x, f.pos.y * size.y);
+                // lit 40% of the time, fading in and out
+                float blink = Mathf.Repeat(t / f.period + f.phase, 1f);
+                float k = Smooth(0f, 0.12f, blink) * (1f - Smooth(0.28f, 0.42f, blink));
+                float a = k * _fliesA;
+                f.core.color = f.core.color.Alpha(a);
+                f.glow.color = f.glow.color.Alpha(0.6f * a);
+            }
+        }
+
+        VGradient SkyQuad(string name, float y0, float y1, bool toTop)
+        {
+            var im = UIKit.Img(_root, null, Color.white, name);
+            var rt = im.rectTransform;
+            rt.anchorMin = new Vector2(0, 0);
+            rt.anchorMax = new Vector2(1, toTop ? 1 : 0);
+            rt.pivot = new Vector2(0.5f, 0);
+            rt.offsetMin = new Vector2(-4, y0);
+            rt.offsetMax = new Vector2(4, toTop ? 40f : y1);
+            return im.gameObject.AddComponent<VGradient>();
+        }
+
+        Image Glow(string name, float size)
+        {
+            var im = UIKit.Img(_root, Theme.Glow(), Color.clear, name);
+            im.rectTransform.anchorMin = im.rectTransform.anchorMax = Vector2.zero;
+            im.rectTransform.sizeDelta = new Vector2(size, size);
+            return im;
+        }
+
+        Image Sprite(string name, string path, float size)
+        {
+            var im = UIKit.Img(_root, Art.Load(path), Color.white, name);
+            im.rectTransform.anchorMin = im.rectTransform.anchorMax = Vector2.zero;
+            im.rectTransform.sizeDelta = new Vector2(size, size);
+            return im;
+        }
+
+        void BuildStars()
+        {
+            _starsNode = UIKit.Node("stars", _root);
+            _starsNode.Stretch();
+            // its own canvas: twinkling rewrites 76 colours twenty times a second, and that must not
+            // rebuild the rest of the sky with it
+            _starsNode.gameObject.AddComponent<Canvas>();
+
+            var rng = new System.Random(20260913);
+            var dot = Art.Load("Art/sky/star_dot");
+            var glint = Art.Load("Art/sky/star_glint");
+            for (int i = 0; i < 76; i++)
+            {
+                bool isGlint = i >= 70;
+                double r = rng.NextDouble();
+                float size = isGlint ? 9f + (float)rng.NextDouble() * 5f
+                                     : (r < 0.7 ? 2f + (float)rng.NextDouble() : 3f + (float)rng.NextDouble() * 1.5f);
+                double c = rng.NextDouble();
+                var tint = c < 0.80 ? Color.white : c < 0.92 ? Theme.Hex("#CFE0FF") : Theme.Hex("#FFE9B8");
+                // the dot sprite's glow is ~4x its core, so draw it that much larger
+                var im = UIKit.Img(_starsNode, isGlint ? glint : dot, tint, "star");
+                im.rectTransform.anchorMin = im.rectTransform.anchorMax = Vector2.zero;
+                im.rectTransform.sizeDelta = Vector2.one * size * (isGlint ? 2.2f : 4f);
+                _stars.Add(new Star
+                {
+                    im = im, glint = isGlint,
+                    x01 = (float)rng.NextDouble(),
+                    y = (float)(Hz + 50.0 + (720.0 - Hz - 50.0) * System.Math.Sqrt(rng.NextDouble())),
+                    baseA = 0.5f + (float)rng.NextDouble() * 0.5f,
+                    period = 1.8f + (float)rng.NextDouble() * 2.7f,
+                    phase = (float)rng.NextDouble() * 6.28f,
+                });
+            }
+        }
+
+        void AddCloud(string shape, float w, float bottom, float lerp, float alpha, float drift, float parallax, float start01, bool mirror)
+        {
+            var sp = Art.Load("Art/sky/cumulus_" + shape);
+            var im = UIKit.Img(_root, sp, Color.white, "cumulus");
+            var rt = im.rectTransform;
+            rt.anchorMin = rt.anchorMax = Vector2.zero;
+            rt.pivot = new Vector2(0.5f, 0f);
+            float h = sp != null ? w * sp.rect.height / sp.rect.width : w * 0.4f;
+            rt.sizeDelta = new Vector2(w, h);
+            if (mirror) rt.localScale = new Vector3(-1, 1, 1);
+            _clouds.Add(new Cloud
+            {
+                im = im, g = im.gameObject.AddComponent<VGradient>(), w = w, bottom = bottom, lerp = lerp,
+                alpha = alpha, drift = drift, parallax = parallax, start01 = start01, x = -1f,
+            });
+        }
+
+        void AddBand(string name, float top, float h, float drift, float parallax, float lerp, float dim = 0f)
+        {
+            var sp = Art.Load("Art/sky/" + name);
+            var band = new Band { top = top, h = h, drift = drift, parallax = parallax, lerp = lerp, dim = dim };
+            band.a = Tile(sp, name, h); band.ga = band.a.gameObject.AddComponent<VGradient>();
+            band.b = Tile(sp, name, h); band.gb = band.b.gameObject.AddComponent<VGradient>();
+            _bands.Add(band);
+        }
+
+        Image Tile(Sprite sp, string name, float h)
+        {
+            var im = UIKit.Img(_root, sp, Color.white, name);
+            var rt = im.rectTransform;
+            rt.anchorMin = rt.anchorMax = Vector2.zero;
+            rt.pivot = new Vector2(0f, 1f);
+            rt.sizeDelta = new Vector2(2048f, h);
+            return im;
+        }
+
+        // ============================================================
+        // per frame
+        // ============================================================
+        void Update()
+        {
+            if (_root == null) return;
+            float dt = Time.unscaledDeltaTime;
+            float t = Time.unscaledTime;
+            float W = _root.rect.width;
+            float camX = _world != null && _world.Camera != null ? _world.Camera.Camera.x : 0f;
+            float speed = _weather != null ? _weather.Blended.cloudSpeed : 1f;
+
+            // cumulus drift and wrap, with parallax
+            foreach (var c in _clouds)
+            {
+                if (c.x < 0f || !Mathf.Approximately(W, _lastWidth)) c.x = c.x < 0f ? c.start01 * W : c.x;
+                c.x += c.drift * speed * dt;
+                float span = W + c.w * 2f;
+                float px = Mathf.Repeat(c.x - camX * c.parallax + c.w, span) - c.w;
+                c.im.rectTransform.anchoredPosition = new Vector2(px, c.bottom);
+            }
+
+            // seamless cloud-sea bands
+            foreach (var b in _bands)
+            {
+                b.x += b.drift * speed * dt;
+                float off = -Mathf.Repeat(b.x + camX * b.parallax, 2048f);
+                b.a.rectTransform.anchoredPosition = new Vector2(off, b.top);
+                b.b.rectTransform.anchoredPosition = new Vector2(off + 2048f, b.top);
+            }
+
+            // stars: positions follow the width; alpha twinkles at ~20 Hz
+            if (!Mathf.Approximately(W, _lastWidth))
+                foreach (var s in _stars) s.im.rectTransform.anchoredPosition = new Vector2(s.x01 * W, s.y);
+            _lastWidth = W;
+
+            // islets bob and slide a little against the camera
+            foreach (var il in _islets)
+            {
+                float px = Mathf.Clamp(-camX * 0.035f, -180f, 180f);
+                var pos = new Vector2(il.x01 * W + px, il.y + Mathf.Sin(t * 6.2832f / il.bobPeriod + il.phase) * 3f);
+                il.im.rectTransform.anchoredPosition = pos;
+                var lamp = pos + new Vector2(il.w * 0.12f, il.w * 0.08f);
+                il.glow.rectTransform.anchoredPosition = lamp;
+                il.dot.rectTransform.anchoredPosition = lamp;
+            }
+            if (_sunRays.enabled) _sunRays.rectTransform.localRotation = Quaternion.Euler(0, 0, -t * 2f);
+            StepFireflies(dt, t);
+
+            bool blending = _weather != null && _weather.Blending;
+            if (t >= _nextPaint || blending)
+            {
+                Paint(W);
+                _nextPaint = t + 1f;
+            }
+            Twinkle(t);
+        }
+
+        float _starsA;
+        float _nextTwinkle;
+
+        void Twinkle(float t)
+        {
+            bool on = _starsA > 0.005f;
+            if (_starsNode.gameObject.activeSelf != on) _starsNode.gameObject.SetActive(on);
+            if (!on || t < _nextTwinkle) return;
+            _nextTwinkle = t + 0.05f;
+            foreach (var s in _stars)
+            {
+                float k = 0.65f + 0.35f * Mathf.Sin(t * 6.2832f / s.period + s.phase);
+                // fade out toward the horizon, where haze would hide them
+                float fade = Smooth(Hz + 50f, Hz + 150f, s.y);
+                var c = s.im.color; c.a = s.baseA * k * fade * _starsA; s.im.color = c;
+                if (s.glint) s.im.rectTransform.localScale = Vector3.one * (0.85f + 0.25f * k);
+            }
+        }
+
+        static float Smooth(float e0, float e1, float x)
+        {
+            float u = Mathf.Clamp01((x - e0) / (e1 - e0));
+            return u * u * (3f - 2f * u);
+        }
+
+        static Color Desat(Color c, float d)
+        {
+            float l = DayCycle.Luma(c);
+            var g = new Color(l, l, l, c.a);
+            return Color.Lerp(c, g, d);
+        }
+
+        /// <summary>Recolour everything from the time of day and the weather.</summary>
+        void Paint(float W)
+        {
+            float hour = DayCycle.Hour;
+            _p = DayCycle.Sample(hour);
+            var w = _weather != null ? _weather.Blended : default(WeatherFx.Look);
+            if (_weather == null) { w.sky = w.sea = w.cloud = w.sun = Color.white; w.sunAlpha = 1f; w.stars = 1f; }
+
+            float night = _p.night;
+            // weather tints at half strength by night, so a drought does not turn the night brown
+            float ww = Mathf.Lerp(1f, 0.5f, night);
+            float d = w.desat * (1f - 0.3f * night);
+            Color Mul(Color c, Color m) { var o = Desat(c * Color.Lerp(Color.white, m, ww), d); o.a = 1f; return o; }
+
+            var top = Mul(_p.skyTop, w.sky);
+            var mid = Mul(_p.skyMid, w.sky);
+            var low = Mul(_p.skyLow, w.sky);
+            var hor = Mul(_p.horizon, w.sky);
+            _skyLow.Set(low, hor);
+            _skyMid.Set(mid, low);
+            _skyTop.Set(top, mid);
+            _sea.Set(Mul(_p.seaTop, w.sea), Mul(_p.seaBottom, w.sea));
+
+            var csLit = Mul(_p.cloudSeaLit, w.cloud);
+            var csShade = Mul(_p.cloudSeaShade, w.cloud);
+            var csLow = Color.Lerp(csLit, csShade, 0.3f);
+            foreach (var b in _bands)
+            {
+                float k = 1f - b.dim * (0.45f + 0.55f * night);
+                var lit = Color.Lerp(csLit, hor, b.lerp) * k;
+                var sh = Color.Lerp(csLow, hor, b.lerp) * k * (1f - b.dim * 0.5f);
+                lit.a = 1f; sh.a = 1f;
+                b.ga.Set(lit, sh); b.gb.Set(lit, sh);
+            }
+            var scLit = Mul(_p.skyCloudLit, w.cloud);
+            var scShade = Mul(_p.skyCloudShade, w.cloud);
+            // the clouds are painted with their own light and shadow now, so the day's shade colour
+            // only cools their lower part a little instead of doing all the shading
+            var scLow = Color.Lerp(scLit, scShade, 0.3f);
+            foreach (var c in _clouds)
+            {
+                c.g.Set(Color.Lerp(scLit, hor, c.lerp), Color.Lerp(scLow, hor, c.lerp));
+                c.im.color = new Color(1f, 1f, 1f, c.alpha * _p.skyCloudA);
+            }
+
+            // sun and moon along their arcs; their light picks the horizon glow and the sheen
+            var sunArc = DayCycle.SunArc(hour);
+            var moonArc = DayCycle.MoonArc(hour);
+            float sunA = DayCycle.SunAlpha(night) * sunArc.z * w.sunAlpha;
+            float moonA = DayCycle.MoonAlpha(night) * moonArc.z * w.sunAlpha;
+            var sunPos = new Vector2(sunArc.x * W, Hz + sunArc.y);
+            var moonPos = new Vector2(moonArc.x * W, Hz + moonArc.y);
+            float sunScale = _p.sunScale * (_weather != null ? _weather.SunScale : 1f);
+
+            var sunCol = _p.sun * w.sun; sunCol.a = sunA;
+            Place(_sun, sunPos, sunCol, sunScale);
+            // shafts of light: faint at noon, stronger in the low gold light of morning and evening
+            float rayA = Mathf.Lerp(0.16f, 0.28f, Mathf.Clamp01((_p.sunGlowA - 0.55f) / 0.2f)) * sunA;
+            Place(_sunRays, sunPos, _p.sunGlow.Alpha(rayA), sunScale);
+            Place(_sunGlow, sunPos, _p.sunGlow.Alpha(_p.sunGlowA * sunA), sunScale);
+            Place(_sunHalo, sunPos, _p.sunGlow.Alpha(0.18f * sunA), sunScale);
+
+            var moonCol = _weather != null && _weather.Target == Weather.Drought ? Theme.Hex("#FFE2B8") : _p.moon;
+            Place(_moon, moonPos, moonCol.Alpha(moonA), 1f);
+            Place(_moonGlow, moonPos, _p.moonGlow.Alpha(Mathf.Max(_p.moonGlowA, 0.35f * night) * moonA), 1f);
+            Place(_moonHalo, moonPos, _p.moonGlow.Alpha(0.10f * moonA), 1f);
+
+            bool sunLeads = sunA >= moonA;
+            float lightX = sunLeads ? sunPos.x : moonPos.x;
+            float bodyA = Mathf.Max(sunA, moonA);
+            _horizonGlow.rectTransform.anchoredPosition = new Vector2(Mathf.Clamp(lightX, 0.2f * W, 0.8f * W), Hz + 6f);
+            _horizonGlow.color = Mul(_p.horizonGlow, w.sky).Alpha(_p.horizonGlowA * (1f - w.desat));
+            _sheen.rectTransform.anchoredPosition = new Vector2(lightX, Hz - 110f);
+            _sheen.color = (sunLeads ? _p.sunGlow : _p.moonGlow).Alpha(_p.sheenA * bodyA);
+
+            _vignette.color = _p.vignette.Alpha(_p.vignetteA / 0.51f);   // the art's own alpha peaks at ~0.51
+
+            _starsA = _p.stars * w.stars;
+
+            // far islets: the land's light, lost in the horizon's haze
+            var isletTop = Color.Lerp(_p.ambient, hor, 0.58f); isletTop.a = 1f;
+            var isletBot = Color.Lerp(_p.ambient, hor, 0.78f); isletBot.a = 1f;
+            float lampA = DayCycle.LanternLight(night);
+            foreach (var il in _islets)
+            {
+                il.g.Set(isletTop, isletBot);
+                il.im.color = new Color(1f, 1f, 1f, 0.92f);
+                il.glow.color = Theme.Hex("#FFC66B").Alpha(0.8f * lampA);
+                il.dot.color = Theme.Hex("#FFE3A0").Alpha(lampA);
+            }
+
+            // fireflies: clear, calm nights only
+            bool calm = _weather == null || _weather.Target == Weather.Sunny || _weather.Target == Weather.Wind || _weather.Target == Weather.Drought;
+            float flyK = Smooth(0.60f, 1.0f, night) * (calm ? 1f : 0f);
+            if (_weather != null && _weather.Target == Weather.Wind) flyK *= 0.5f;
+            _fliesA = flyK;
+
+            PushLight(night, w);
+        }
+
+        static void Place(Image im, Vector2 pos, Color c, float scale)
+        {
+            bool on = c.a > 0.003f;
+            if (im.enabled != on) im.enabled = on;
+            if (!on) return;
+            im.rectTransform.anchoredPosition = pos;
+            im.color = c;
+            im.rectTransform.localScale = Vector3.one * scale;
+        }
+
+        /// <summary>The day's light on the islands and the lanterns, through the readability floor.
+        /// Pushed only when a channel moves by 2/255 or more: SetAmbient rewrites colours across the
+        /// whole world canvas, and a dusk would otherwise rebuild it every second.</summary>
+        void PushLight(float night, WeatherFx.Look w)
+        {
+            if (_world == null) return;
+            var wash = _weather != null ? _weather.Wash : new Color(1, 1, 1, 0);
+            DayCycle.FloorAmbient(_p.ambient, _world.LandTint, wash, out var land, out var crop);
+            if (Moved(land, _pushedLand) || Moved(crop, _pushedCrop))
+            {
+                _world.SetAmbient(land, crop);
+                _pushedLand = land; _pushedCrop = crop;
+            }
+            float k = Mathf.Max(DayCycle.LanternLight(night), w.lanternMin);
+            if (Mathf.Abs(k - _pushedLantern) > 0.01f)
+            {
+                _world.SetLanternLight(k);
+                _pushedLantern = k;
+            }
+        }
+
+        static bool Moved(Color a, Color b)
+        {
+            const float Step = 2f / 255f;
+            return Mathf.Abs(a.r - b.r) >= Step || Mathf.Abs(a.g - b.g) >= Step || Mathf.Abs(a.b - b.b) >= Step;
+        }
+
+        /// <summary>Repaint now — after a dev tool or the screenshot pass forces an hour.</summary>
+        public void Repaint() { _nextPaint = 0f; }
+    }
+}

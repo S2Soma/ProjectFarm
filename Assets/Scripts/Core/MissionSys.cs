@@ -84,15 +84,22 @@ namespace LQFarm
             public bool cropSpecific;
         }
 
+        /// <summary>Lifetimes are a couple of hours, not half an hour: with crops that take hours, a
+        /// player's day is a handful of sessions, and a contract that lapses between two of them breaks
+        /// the streak of exactly the player who comes back.</summary>
         static readonly Kind[] Kinds =
         {
-            new Kind { type = "harvest", label = "Thu hoạch {0} cây",      baseNeed = 6,  hours = 0.5f },
-            new Kind { type = "plant",   label = "Gieo trồng {0} hạt",     baseNeed = 6,  hours = 0.5f },
-            new Kind { type = "water",   label = "Tưới nước {0} lần",      baseNeed = 5,  hours = 0.5f },
-            new Kind { type = "sell",    label = "Bán {0} nông sản",       baseNeed = 10, hours = 0.5f },
-            new Kind { type = "mutate",  label = "Thu {0} cây đột biến",   baseNeed = 2,  hours = 2f },
-            new Kind { type = "harvest", label = "Thu hoạch {0} {1}",      baseNeed = 6,  hours = 0.5f, cropSpecific = true },
+            new Kind { type = "harvest", label = "Thu hoạch {0} cây",      baseNeed = 6,  hours = 2f },
+            new Kind { type = "plant",   label = "Gieo trồng {0} hạt",     baseNeed = 6,  hours = 2f },
+            new Kind { type = "water",   label = "Tưới nước {0} lần",      baseNeed = 5,  hours = 2f },
+            new Kind { type = "sell",    label = "Bán {0} nông sản",       baseNeed = 10, hours = 2f },
+            new Kind { type = "mutate",  label = "Thu {0} cây đột biến",   baseNeed = 2,  hours = 6f },
+            new Kind { type = "harvest", label = "Thu hoạch {0} {1}",      baseNeed = 6,  hours = 2f, cropSpecific = true },
         };
+
+        /// <summary>A contract names only a crop that grows in this long or less, and lives long enough
+        /// to grow it: "Thu hoạch 6 Bơ Sáp" would be a day of six plots for a reward sized for minutes.</summary>
+        public const int MaxContractGrowSeconds = 3 * 3600;
 
         /// <summary>Crop-specific contracts pay this much more.
         ///
@@ -133,7 +140,7 @@ namespace LQFarm
                 // name something the player can grow, preferring one they have neglected
                 var pool = new List<Seed>();
                 foreach (var seed in GameData.Seeds)
-                    if (seed.lv <= s.lv) pool.Add(seed);
+                    if (seed.lv <= s.lv && !seed.big && seed.grow <= MaxContractGrowSeconds) pool.Add(seed);
                 if (pool.Count == 0) pool.Add(GameData.Seeds[0]);
                 cropId = pool[(int)(WeatherSys.Frac(Hash(s.worldSeed, slot, cycle ^ 0xA3)) * pool.Count) % pool.Count].id;
             }
@@ -141,6 +148,8 @@ namespace LQFarm
             var gd = Def(grade);
             int need = Mathf.Max(1, Mathf.RoundToInt(kind.baseNeed * gd.need));
             float hours = kind.hours * Mathf.Max(1f, gd.need * 0.5f);
+            var named = GameData.Get(cropId);
+            if (named != null) hours += named.grow * 1.5f / 3600f;       // time to actually grow it
 
             return new MissionRec
             {
@@ -197,30 +206,62 @@ namespace LQFarm
         // ============================================================
         // rewards
         // ============================================================
-        /// <summary>Coin margin of the best crop the player can grow — the unit every reward in
-        /// the game is quoted in, so the tables self-balance as the economy grows instead of
-        /// needing a rebalance every few levels.</summary>
-        public static int Unit(PlayerState s)
+        /// <summary>The length of time UNIT measures: one plot's best earnings over this many hours.</summary>
+        public const float UnitHours = 8f;
+
+        /// <summary>UNIT — the coin amount every reward and price in the game is quoted in, so the
+        /// tables keep their meaning as the economy grows instead of needing a rebalance every few levels.
+        ///
+        /// **UNIT is what one plot earns the player in one 8-hour absence** — a night's sleep, a school or
+        /// work day — with the best crop they can grow: the whole margin of a crop that is ready within
+        /// the eight hours, or eight hours' share of a longer one.
+        ///
+        /// It used to be the best margin PER HARVEST. That was fine while every crop took minutes; with a
+        /// 2-minute-to-24-hour ladder it nearly triples between level 16 (an 8-hour cabbage) and level 30
+        /// (a 24-hour avocado) while what a plot earns per hour moves by a fifth, and every per-plot price
+        /// ("Chín ngay", a watering can) would be quoted in days of one plot. Per HOUR fails the other way: the best hourly crop is always
+        /// the carrot someone taps every two minutes, so UNIT would never grow at all. Eight hours is the
+        /// one absence every play style has every day, and it grows with each unlock that fits it
+        /// (steeply through the early game, by the level's price perk after the 8-hour cabbage).
+        /// Base grow times are used, not the level-shortened ones, so a level-up never moves UNIT sideways.</summary>
+        public static int Unit(PlayerState s) { return Unit(s, UnitHours); }
+
+        /// <summary>UNIT measured over another span — for the journey report, which checks the choice.</summary>
+        public static int Unit(PlayerState s, float hours)
         {
-            int best = 1;
+            float slot = hours * 3600f, best = 1f;
             foreach (var seed in GameData.Seeds)
             {
-                if (seed.lv > s.lv) continue;
-                int margin = s.HarvestValue(seed.id, 0) - seed.price;
-                if (margin > best) best = margin;
+                // trees are four cells of land per plot; counting one would quadruple every price
+                if (seed.lv > s.lv || seed.big) continue;
+                float margin = s.HarvestValue(seed.id, 0) - seed.price;
+                float v = margin * Mathf.Min(1f, slot / Mathf.Max(1f, seed.grow));
+                if (v > best) best = v;
             }
-            return best;
+            return Mathf.RoundToInt(best);
         }
 
+        /// <summary>The same measure in XP: one plot's best XP over an 8-hour absence.</summary>
         public static int XpUnit(PlayerState s)
         {
-            int best = 1;
+            float slot = UnitHours * 3600f, best = 1f;
             foreach (var seed in GameData.Seeds)
-                if (seed.lv <= s.lv && seed.xp > best) best = seed.xp;
-            return best;
+            {
+                if (seed.lv > s.lv || seed.big) continue;
+                float v = s.XpFor(seed, 0) * Mathf.Min(1f, slot / Mathf.Max(1f, seed.grow));
+                if (v > best) best = v;
+            }
+            return Mathf.RoundToInt(best);
         }
 
-        const float BaseReward = 3f;
+        /// <summary>Coins for visiting a friend: 0,8 to 2 UNIT. It was 400–1.300 flat, which was a
+        /// quarter of a level at level 1 and nothing at level 20.</summary>
+        public static int VisitCoin(PlayerState s, float roll)
+        {
+            return Mathf.Max(10, Mathf.RoundToInt(Unit(s) * (0.8f + 1.2f * Mathf.Clamp01(roll)) / 10f) * 10);
+        }
+
+        const float BaseReward = 2f;
 
         public static int CoinReward(PlayerState s, MissionRec m)
         {
@@ -263,6 +304,33 @@ namespace LQFarm
         public static int ChapterXp(PlayerState s, int indexInChapter)
         {
             return Mathf.RoundToInt(XpUnit(s) * BaseReward * Def(ChapterGrade(indexInChapter)).reward);
+        }
+
+        /// <summary>A daily's reward. The table's numbers are weights read as UNIT / 400, so
+        /// "Thăm nom 5 người bạn" (1500) is 3,75 of the best crop's margin at every level. They
+        /// used to be paid as written: 1.500 XP at level 1 was four levels for tapping five
+        /// friends, and at level 30 it was nothing.</summary>
+        public static int DailyXp(PlayerState s, Task t)   { return Mathf.Max(10, Mathf.RoundToInt(XpUnit(s) * t.xp / 400f)); }
+        public static int DailyCoin(PlayerState s, Task t) { return Mathf.Max(10, Mathf.RoundToInt(Unit(s) * t.coin / 400f)); }
+
+        /// <summary>What claiming <paramref name="t"/> pays right now: the panel, the claim and the
+        /// reward card all read this one number.</summary>
+        public static int TaskXp(PlayerState s, Task t, bool daily)
+        {
+            return daily ? DailyXp(s, t) : ChapterXp(s, IndexInChapter(t));
+        }
+
+        public static int TaskCoin(PlayerState s, Task t, bool daily)
+        {
+            return daily ? DailyCoin(s, t) : ChapterCoin(s, IndexInChapter(t));
+        }
+
+        public static int IndexInChapter(Task t)
+        {
+            foreach (var ch in GameData.Chapters)
+                for (int i = 0; i < ch.tasks.Length; i++)
+                    if (ch.tasks[i] == t) return i;
+            return 0;
         }
 
         static long Hash(long seed, int slot, long cycle)

@@ -21,13 +21,114 @@ trimmed each to its bounding box. No recolouring or redrawing.
 
 assets/crop/
 ------------
-Kenney "Food Kit" — Creative Commons CC0 1.0 (public domain).
-  https://kenney.nl/assets/food-kit
-Used for the produce icons of the crops the painted sheet does not
-cover. Previews/*.png, trimmed and upscaled 2x.
+Nineteen produce icons (pepper, eggplant, grape, cherries, banana,
+pineapple, coconut, avocado, lemon, orange, pear, broccoli, cauliflower,
+cabbage, mushroom, leek, garlic, radish, beetroot) are drawn procedurally
+for this project by Tools/gen_produce.py, 256 px.
+
+The remaining files (bread, cheese, egg, honey, lime, salad, potato, corn,
+peach, strawberry, watermelon) are still Kenney "Food Kit" previews —
+Creative Commons CC0 1.0 (public domain), https://kenney.nl/assets/food-kit
+— and are either unused or covered by painted art at runtime.
+
+Resources/Art/items/
+--------------------
+Shop item icons and the farm coin, drawn procedurally for this project by
+Tools/gen_items.py.
 
 Reference screenshots
 ---------------------
 Images/Screenshot_*.jpg are screenshots of Garena's "Lien Quan Mobile"
 farm mini-game. They were used only to match LAYOUT and interaction
 design. No pixel from them ships in this project.
+
+Resources/Fonts/  (Baloo 2)
+---------------------------
+Baloo 2 by The Baloo 2 Project Authors (Ek Type) — SIL Open Font License 1.1
+(full text: Resources/Fonts/Baloo2-OFL.txt).
+  https://github.com/EkType/Baloo2
+Static SemiBold (600), Bold (700) and ExtraBold (800) instances cut from the
+variable font by Tools/make_fonts.py (fontTools): subset to Latin and
+Vietnamese, unitsPerEm and vertical metrics changed so it sits at Nunito's
+size. The licence declares no Reserved Font Name; the modified family is
+renamed "Baloo 2 MiT" inside the files anyway, so it is never mistaken for
+the original. The OFL allows bundling in a game; the font may not be sold
+on its own.
+
+Tools/fonts/  (Nunito)
+----------------------
+Nunito by The Nunito Project Authors — SIL Open Font License 1.1
+(Tools/fonts/Nunito-OFL.txt), https://github.com/googlefonts/nunito.
+No longer shipped: kept only because Tools/gen_items.py letters two icons
+("?" on the seed bag, "x2" on the XP charm) with it.
+
+Resources/Art/items/pointer_hand.png
+------------------------------------
+The tutorial's pointing hand is "Backhand index pointing up" (3D, light skin
+tone) from Microsoft Fluent Emoji — MIT License, Copyright (c) Microsoft
+Corporation (full text: Tools/pointer/LICENSE-fluentui-emoji.txt).
+  https://github.com/microsoft/fluentui-emoji
+Tools/make_pointer.py only adds a soft drop shadow and padding.
+
+Resources/Art/pets/
+-------------------
+Six pets (MiT, TiM, Pinkteriii, Shushi, Yummy, Bé Gà) cut by
+Tools/slice_pets.py from the sheets in Pets/, supplied by the project owner
+(file name = pet name). Cropped, trimmed, scaled and — for Yummy's walk —
+mirrored; no pixel redrawn. Provenance is the owner's to confirm, as for
+the other supplied sheets.
+
+Resources/Art/fx/, Resources/Art/sky/cirrus, sea_wisps, Resources/Art/beds/skin_*,
+Resources/Art/items/cos_*
+------------------------------------------------------
+Drawn procedurally for this project by Tools/gen_fx.py, Tools/gen_sky.py and
+Tools/gen_cosmetics.py.
+
+Resources/Art/chrome/shape_*, top_48, soft_*
+--------------------------------------------
+Drawn procedurally by Tools/gen_chrome.py for this project.
+
+Resources/Audio/  (sound effects)
+---------------------------------
+All synthesised from scratch for this project by Tools/gen_sfx.py
+(2026-09-15): tap, tab, toggle, menu_open/close, panel_open/close,
+harvest_0/1, plant_0/1, water, coins, error, claim, mutation, chest_open,
+plank_0..2, level_up, island_unlock, legendary. Sine partials (marimba,
+kalimba, bell, harp), filtered noise (leaves, soil, air) and a small
+algorithmic room — no samples, no third-party sounds, nothing to license.
+They replace the Kenney CC0 audio used until then (same file names), so no
+Kenney sound ships any more. Resources/Audio/Kenney-License.txt stays: the
+Kenney CC0 images elsewhere (Art/ui2, Art/crop) are under the same licence.
+(cine_whoosh.ogg and cine_chime.ogg: see below.)
+
+Resources/Audio/Music/terrace_in_the_clouds.ogg  (background music)
+-------------------------------------------------------------------
+From Terrace_in_the_Clouds.mp3, supplied by the project owner (repo root).
+Tools/make_music.py only trims the ending into a seamless loop and lowers the
+level; no notes changed. The mp3 carries no title/artist/copyright tags,
+only a C2PA manifest signed by Google stating "Created by Google Generative
+AI" (IPTC digitalSourceType trainedAlgorithmicMedia) with a SynthID
+watermark, time-stamped 2026-09-15. So it is AI-generated with a Google
+tool. Rights to use it in a released game depend on that tool's terms and
+the owner's account — the owner must confirm before any public release.
+Fine for test builds.
+
+Resources/Art/bridge/, Resources/Art/sky/
+-----------------------------------------
+Drawn procedurally for this project (Tools/gen_bridge.py, Tools/gen_sky.py).
+bridge_lantern.png is cut from Art/gen/fence_gate.png (itself sheared from
+the owner-supplied Art/farm/fence_lamp.png — same provenance caveat).
+
+Resources/Art/cine/, Resources/Shaders/UICloudVeil.shader
+----------------------------------------------------------
+The start-screen-to-farm cinematic: the cloud veil, the cloud heaps, the puff
+and the light shafts, drawn procedurally for this project by
+Tools/gen_cinematic.py (with the billow painter of Tools/gen_sky.py).
+Original; nothing traced or sampled.
+
+Resources/Audio/cine_whoosh.ogg, cine_chime.ogg
+-----------------------------------------------
+Synthesised from scratch for this project by Tools/gen_cine_audio.py
+(band-passed noise for the whoosh, sine partials for the chime). No samples.
+Chime retuned to A-flat and whoosh low-passed on 2026-09-15 to match the
+new effects.

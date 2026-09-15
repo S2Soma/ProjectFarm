@@ -63,7 +63,16 @@ namespace LQFarm
                     lockIc.rectTransform.Anchor(UIKit.Center, new Vector2(0, 6), new Vector2(34, 34));
                 }
 
-                if (!string.IsNullOrEmpty(s.badge))
+                if (s.big)
+                {
+                    // trees go only in the big plots of Đảo Khổng Lồ: said on the card, before buying
+                    var tag = UIKit.Node("badge", cell);
+                    tag.Anchor(UIKit.TopLeft, new Vector2(4, -4), new Vector2(62, 22));
+                    UIKit.Round(tag, Theme.Hex("#7A5A2E"), 11, "bg").rectTransform.Stretch();
+                    UIKit.Label(tag, "CÂY LỚN", 12, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold)
+                         .rectTransform.Stretch();
+                }
+                else if (!string.IsNullOrEmpty(s.badge))
                 {
                     var tagCol = s.badge == "exp" ? Theme.Blue : s.badge == "helm" ? Theme.Red : Theme.Green;
                     var tagTxt = s.badge == "exp" ? "EXP" : s.badge == "helm" ? "HOT" : "MỚI";
@@ -85,32 +94,34 @@ namespace LQFarm
             UIKit.Round(_detail, Theme.Cream2, 22, "bg").rectTransform.Stretch();
 
             var artBox = UIKit.Node("art", _detail);
-            artBox.Anchor(UIKit.Top, new Vector2(0, -8), new Vector2(112, 112));
+            // a little smaller than it was, to make room for the "Tưới nước" row above the stepper
+            artBox.Anchor(UIKit.Top, new Vector2(0, -6), new Vector2(98, 98));
             UIKit.Img(artBox, Theme.Glow(), Theme.Green.Alpha(0.28f), "glow").rectTransform.Stretch(-16, -16, -16, -16);
             _art = UIKit.Img(artBox, null, Color.white, "im");
             _art.preserveAspect = true;
             _art.rectTransform.Stretch(8, 8, 8, 8);
 
             _name = UIKit.Label(_detail, "", 26, Theme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
-            _name.rectTransform.Anchor(UIKit.Top, new Vector2(0, -124), new Vector2(340, 30));
+            _name.rectTransform.Anchor(UIKit.Top, new Vector2(0, -106), new Vector2(340, 30));
 
             _rarity = UIKit.Label(_detail, "", 16, Theme.InkSoft, TextAnchor.MiddleCenter);
-            _rarity.rectTransform.Anchor(UIKit.Top, new Vector2(0, -152), new Vector2(340, 20));
+            _rarity.rectTransform.Anchor(UIKit.Top, new Vector2(0, -134), new Vector2(340, 24));
 
             // "Số loại" read Seed.colors, a field from the web build that no longer means anything
             // (mutation tiers are a separate table now), and "Giá bán" showed the per-FRUIT price
             // without saying so — next to a harvest that yields three to six of them.
-            string[] keys = { "time", "xp", "en", "sell", "colors" };
-            string[] labels = { "Thời gian chín", "Kinh nghiệm", "Năng lượng", "Giá mỗi quả", "Số quả / vụ" };
+            // "Tưới nước" says how many times the crop drinks and what each watering is worth, in time
+            string[] keys = { "time", "water", "xp", "en", "sell", "colors" };
+            string[] labels = { "Thời gian chín", "Tưới nước", "Kinh nghiệm", "Năng lượng", "Giá mỗi quả", "Số quả / vụ" };
             for (int i = 0; i < keys.Length; i++)
             {
                 var row = UIKit.Node("s", _detail);
-                row.Anchor(UIKit.Top, new Vector2(0, -180 - i * 30), new Vector2(340, 26));
+                row.Anchor(UIKit.Top, new Vector2(0, -162 - i * 29), new Vector2(340, 26));
                 UIKit.Round(row, Theme.Cream, 14, "bg").rectTransform.Stretch();
                 UIKit.Label(row, labels[i], 18, Theme.InkSoft, TextAnchor.MiddleLeft)
-                     .rectTransform.Stretch(14, 0, 120, 0);
+                     .rectTransform.Stretch(14, 0, 150, 0);
                 var v = UIKit.Label(row, "", 19, Theme.Ink, TextAnchor.MiddleRight, FontStyle.Bold);
-                v.rectTransform.Stretch(180, 0, 14, 0);
+                v.rectTransform.Stretch(150, 0, 14, 0);
                 _stat[keys[i]] = v;
             }
 
@@ -164,6 +175,7 @@ namespace LQFarm
             _rarity.color = Theme.Rarity[s.r];
 
             _stat["time"].text = Fmt.Time(Mathf.RoundToInt(GS.Local.GrowTime(s)));
+            _stat["water"].text = s.waters + " lần · sớm " + Fmt.Time(s.waterCut);
             _stat["xp"].text = "+" + s.xp;
             _stat["en"].text = "+" + s.en;
             _stat["sell"].text = Fmt.N(GS.Local.SellPrice(s.id, 0));
@@ -222,13 +234,17 @@ namespace LQFarm
             Refresh();
         }
 
+        int _shownTab = -1;          // a tab switch starts the list at its top; a refresh in place keeps the scroll
+
         public override void Refresh()
         {
             _setTab?.Invoke(_tab);
             _steal.text = (20 - GS.Local.stealLeft) + " / 20";
-            foreach (Transform c in _list) UnityEngine.Object.Destroy(c.gameObject);
+            ClearList(_list);
+            bool newTab = _shownTab != _tab;
+            _shownTab = _tab;
 
-            if (_tab == 2) { BuildProfile(); return; }
+            if (_tab == 2) { BuildProfile(); if (newTab) ScrollTop(_list); return; }
 
             bool suggest = _tab == 1;
             var pool = suggest ? GameData.Friends.Skip(3) : GameData.Friends.Take(3);
@@ -274,6 +290,7 @@ namespace LQFarm
                 b.GetComponent<RectTransform>().Anchor(UIKit.Right, new Vector2(-20, 0), new Vector2(170, 54));
             }
 
+            if (newTab) ScrollTop(_list);
             Tween.Stagger(_list, 0.05f);
         }
 
@@ -336,6 +353,11 @@ namespace LQFarm
         RectTransform _grid;
         Action<int> _setTab;
 
+        /// <summary>For the screenshot pass: which tab the next ShopPanel opens on.</summary>
+        public static void OpenOnTab(int tab) { _tab = Mathf.Clamp(tab, 0, 1); }
+        /// <summary>For the screenshot pass: which slot the Trang trí filter starts on (-1: all).</summary>
+        public static void OpenOnSlot(int slot) { _slot = slot; }
+
         public override void Build()
         {
             var tabs = UIKit.Node("tabs", Body);
@@ -356,22 +378,96 @@ namespace LQFarm
             var box = UIKit.Node("box", Body);
             box.anchorMin = new Vector2(0, 0); box.anchorMax = new Vector2(1, 1);
             box.offsetMin = new Vector2(0, 0); box.offsetMax = new Vector2(0, -58);
+            _box = box;
+            BuildSlotFilter();
             Well(box);
-            _grid = UIKit.ScrollGrid(box, new Vector2(228, 218), new Vector2(16, 16), new RectOffset(16, 16, 16, 16));
+            // four across: twelve goods in three rows, where 228-wide cards fitted only three
+            _grid = UIKit.ScrollGrid(box, new Vector2(214, 214), new Vector2(14, 14), new RectOffset(14, 14, 14, 14));
             ((RectTransform)_grid.parent).Stretch(4, 4, 4, 4);
 
             Refresh();
         }
 
+        int _shownTab = -1;
         Text _wallet;
+        RectTransform _box, _filterRow;
+
+        /// <summary>Trang trí shelf filter: -1 for everything, else a <see cref="CosmeticSlot"/>.</summary>
+        static int _slot = -1;
+        readonly List<(int slot, Image face, Text label)> _chips = new List<(int, Image, Text)>();
+
+        /// <summary>The order the filter row lists the slots in: what changes the farm first,
+        /// then the effects, then the profile.</summary>
+        static readonly CosmeticSlot[] FilterOrder =
+        {
+            CosmeticSlot.Plot, CosmeticSlot.Plant, CosmeticSlot.Water, CosmeticSlot.Harvest, CosmeticSlot.Toast,
+            CosmeticSlot.Tap, CosmeticSlot.Swipe, CosmeticSlot.Frame, CosmeticSlot.Badge, CosmeticSlot.Decor,
+        };
+
+        /// <summary>Forty cosmetics in one grid was a wall. A row of pills above it narrows the shelf
+        /// to one slot; "Tất cả" keeps them grouped in the same order.</summary>
+        void BuildSlotFilter()
+        {
+            _filterRow = UIKit.Node("filters", Body);
+            _filterRow.anchorMin = new Vector2(0, 1); _filterRow.anchorMax = new Vector2(1, 1);
+            _filterRow.pivot = new Vector2(0.5f, 1f);
+            _filterRow.offsetMin = new Vector2(0, -104); _filterRow.offsetMax = new Vector2(0, -60);
+            var view = UIKit.Node("view", _filterRow);
+            view.Stretch();
+            view.gameObject.AddComponent<RectMask2D>();
+            var hit = view.gameObject.AddComponent<Image>();
+            hit.color = new Color(0, 0, 0, 0);
+            var sr = view.gameObject.AddComponent<ScrollRect>();
+            var content = UIKit.Node("content", view);
+            content.anchorMin = new Vector2(0, 0); content.anchorMax = new Vector2(0, 1);
+            content.pivot = new Vector2(0, 0.5f);
+            content.anchoredPosition = Vector2.zero;
+            var row = content.gameObject.AddComponent<HorizontalLayoutGroup>();
+            row.spacing = 8; row.childControlWidth = false; row.childControlHeight = false;
+            row.childAlignment = TextAnchor.MiddleLeft; row.padding = new RectOffset(2, 2, 2, 2);
+            var fit = content.gameObject.AddComponent<ContentSizeFitter>();
+            fit.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            sr.content = content; sr.viewport = view; sr.horizontal = true; sr.vertical = false;
+            sr.movementType = ScrollRect.MovementType.Clamped;
+
+            void Chip(int slot, string text)
+            {
+                var chip = UIKit.Node("chip", content);
+                var face = UIKit.Img(chip, null, Theme.Cream2, "face");
+                face.rectTransform.Stretch();
+                face.raycastTarget = true;
+                var lb = UIKit.Label(chip, text, 17, Theme.InkSoft, TextAnchor.MiddleCenter, FontStyle.Bold);
+                lb.rectTransform.Stretch(14, 0, 14, 1);
+                chip.sizeDelta = new Vector2(Mathf.Max(70f, lb.preferredWidth + 30f), 38f);
+                Chrome.Shape(face, 19f);
+                var b = chip.gameObject.AddComponent<Button>();
+                b.targetGraphic = face;
+                b.onClick.AddListener(() => { _slot = slot; Sfx.Play(SfxId.Tab); Refresh(); ScrollTop(_grid); });
+                _chips.Add((slot, face, lb));
+            }
+            Chip(-1, "Tất cả");
+            foreach (var sl in FilterOrder) Chip((int)sl, Cosmetics.SlotNames[(int)sl]);
+        }
 
         public override void Refresh()
         {
             _setTab?.Invoke(_tab);
             if (_wallet != null) _wallet.text = Fmt.N(GS.Local.coin);
-            foreach (Transform c in _grid) UnityEngine.Object.Destroy(c.gameObject);
+            ClearList(_grid);
+            bool newTab = _shownTab != _tab;
+            _shownTab = _tab;
 
-            var items = _tab == 0 ? GameData.ShopGoods : GameData.ShopCoin;
+            bool cos = _tab == 1;
+            _filterRow.gameObject.SetActive(cos);
+            _box.offsetMax = new Vector2(0, cos ? -110 : -58);
+            foreach (var c in _chips)
+            {
+                bool on = c.slot == _slot;
+                c.face.color = on ? Theme.Green : Theme.Cream2;
+                c.label.color = on ? Color.white : Theme.InkSoft;
+            }
+            if (cos) { RefreshCosmetics(); if (newTab) ScrollTop(_grid); Tween.Stagger(_grid, 0.03f); return; }
+            var items = GameData.ShopGoods;
             foreach (var it in items)
             {
                 var item = it;
@@ -403,7 +499,10 @@ namespace LQFarm
                 var nm = UIKit.Label(card, it.name, 19, Theme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold);
                 nm.rectTransform.Anchor(UIKit.Top, new Vector2(0, -122), new Vector2(210, 24));
 
-                var sub = UIKit.Label(card, sold ? "Đã sở hữu" : it.sub, 15, Theme.InkSoft, TextAnchor.MiddleCenter);
+                // a running charm says how long it has left instead of what it does
+                long until = it.effect == "mutate" ? GS.Local.buffMutateUntil : it.effect == "xp2" ? GS.Local.buffXpUntil : 0;
+                string subText = sold ? "Đã sở hữu" : until > GS.Now ? "Còn hiệu lực " + Mathf.CeilToInt((until - GS.Now) / 60000f) + " phút" : it.sub;
+                var sub = UIKit.Label(card, subText, 15, until > GS.Now ? Theme.GreenDeep : Theme.InkSoft, TextAnchor.MiddleCenter);
                 sub.rectTransform.Anchor(UIKit.Top, new Vector2(0, -146), new Vector2(210, 20));
 
                 var priceBox = UIKit.Node("p", card);
@@ -427,7 +526,85 @@ namespace LQFarm
                 card.gameObject.AddComponent<PressFx>();
             }
 
+            if (newTab) ScrollTop(_grid);
             Tween.Stagger(_grid, 0.03f);
+        }
+
+        static string[] SlotNames => Cosmetics.SlotNames;
+
+        /// <summary>The Trang trí shelf. A card says what it is, where it shows, and its state in
+        /// one place: a price to buy, "Dùng" to wear something owned, or "Đang dùng" (tap again to
+        /// take it off). One item per slot is worn, so wearing a frame quietly takes off the
+        /// other frame — the card that was "Đang dùng" turns back to "Dùng".</summary>
+        void RefreshCosmetics()
+        {
+            var s = GS.Local;
+            var shelf = new List<Cosmetic>();
+            foreach (var sl in FilterOrder)
+                if (_slot < 0 || (int)sl == _slot)
+                    foreach (var c in Cosmetics.All) if (c.slot == sl) shelf.Add(c);
+            foreach (var c in shelf)
+            {
+                var cos = c;
+                bool owned = Cosmetics.Owns(s, c.id);
+                bool worn = Cosmetics.IsWorn(s, c.id);
+
+                var card = UIKit.Node("card", _grid);
+                var face = UIKit.Round(card, worn ? Theme.Hex("#EAF7E4") : Theme.Cream, 20, "face");
+                face.rectTransform.Stretch();
+                face.raycastTarget = true;
+                if (worn)
+                {
+                    var ring = UIKit.Img(card, null, Theme.Green, "ring");
+                    ring.rectTransform.Stretch(-3, -3, -3, -3);
+                    Chrome.Shape(ring, 23f);
+                    ring.transform.SetAsFirstSibling();
+                }
+
+                var slot = UIKit.Node("slot", card);
+                slot.Anchor(UIKit.TopLeft, new Vector2(10, -10), new Vector2(92, 24));
+                var slotBg = UIKit.Img(slot, null, Theme.Ink.Alpha(0.10f), "bg");
+                slotBg.rectTransform.Stretch();
+                Chrome.Shape(slotBg, 12f);
+                UIKit.Label(slot, SlotNames[(int)c.slot], 14, Theme.InkSoft, TextAnchor.MiddleCenter, FontStyle.Bold)
+                     .rectTransform.Stretch();
+
+                var artBox = UIKit.Node("art", card);
+                artBox.Anchor(UIKit.Top, new Vector2(0, -24), new Vector2(92, 92));
+                UIKit.Img(artBox, Theme.Glow(), (worn ? Theme.Green : Theme.Amber).Alpha(0.22f), "glow")
+                     .rectTransform.Stretch(-14, -14, -14, -14);
+                var im = UIKit.Img(artBox, Art.Item(c.art), Color.white, "im");
+                im.preserveAspect = true;
+                im.rectTransform.Stretch();
+
+                UIKit.Label(card, c.name, 19, Theme.Ink, TextAnchor.MiddleCenter, FontStyle.Bold)
+                     .rectTransform.Anchor(UIKit.Top, new Vector2(0, -122), new Vector2(210, 26));
+                UIKit.Label(card, c.desc, 15, Theme.InkSoft, TextAnchor.MiddleCenter)
+                     .rectTransform.Anchor(UIKit.Top, new Vector2(0, -148), new Vector2(210, 22));
+
+                var btn = UIKit.Node("p", card);
+                btn.Anchor(UIKit.Bottom, new Vector2(0, 12), new Vector2(190, 36));
+                var look = worn ? Looks.Segment : owned ? Looks.BtnGreen : Looks.Well;
+                look.lip = 0f; look.shadow = Color.clear;
+                SurfaceLook.Add(btn, look);
+                if (!owned)
+                {
+                    var ci = UIKit.Img(btn, CoinIcon, Color.white, "ic");
+                    ci.preserveAspect = true;
+                    ci.rectTransform.Anchor(UIKit.Left, new Vector2(24, 0), new Vector2(26, 26));
+                    UIKit.Label(btn, Fmt.N(c.price), 20, s.coin >= c.price ? Theme.AmberDeep : Theme.Hex("#B8573F"), TextAnchor.MiddleRight, FontStyle.Bold)
+                         .rectTransform.Stretch(42, 0, 16, 0);
+                }
+                else if (worn)
+                    UIKit.Label(btn, "Đang dùng", 18, Theme.GreenDeep, TextAnchor.MiddleCenter, FontStyle.Bold).rectTransform.Stretch();
+                else
+                    UIKit.LabelOutlined(btn, "Dùng", 19, Color.white, TextAnchor.MiddleCenter, Looks.BtnGreen.inkLine).rectTransform.Stretch();
+
+                var b = card.gameObject.AddComponent<Button>();
+                b.targetGraphic = face;
+                b.onClick.AddListener(() => app.TapCosmetic(cos));
+                card.gameObject.AddComponent<PressFx>();
+            }
         }
     }
 
@@ -517,7 +694,7 @@ namespace LQFarm
             _claim.interactable = claimable;
             UIKit.Restyle(_claim, claimable ? Theme.Amber : Theme.Cream3, claimable ? (Color?)null : Theme.InkSoft);
 
-            foreach (Transform c in _list) UnityEngine.Object.Destroy(c.gameObject);
+            ClearList(_list);
 
             foreach (var set in GameData.Collections)
             {
@@ -552,9 +729,10 @@ namespace LQFarm
                     // Blacked out until harvested, as the design asks. A faded full-colour picture
                     // gives away what the mutation looks like, which is the one thing the book is
                     // for — finding out.
-                    var tint = got ? Art.VariantTint(seed.art, it.v) : new Color(0.20f, 0.16f, 0.13f, 1f);
+                    var tint = got ? Color.white : new Color(0.20f, 0.16f, 0.13f, 1f);
                     var cell = ItemCell(block, Art.Icon(seed.art, it.v), tint,
                                         seed.r, null, got ? it.name : "???", !got);
+                    if (got) MutationTint.Apply(cell.Find("art/im")?.GetComponent<Image>(), seed.art, it.v);
                     cell.Anchor(UIKit.BottomLeft, new Vector2(20 + i * 108, 12), new Vector2(98, 98));
                 }
 

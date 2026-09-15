@@ -1,241 +1,139 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace LQFarm
 {
-    /// <summary>The permanent on-screen furniture: player card, currency chips,
-    /// the two side rails of shortcuts and the primary action bar.</summary>
+    /// <summary>The permanent on-screen furniture.
+    ///
+    ///     top left      player card, the active mission, and under it the two bulk verbs
+    ///     top           the weather disc (tap for the season popup)
+    ///     top right     energy and coins
+    ///     bottom left   the island pager
+    ///     bottom right  the menu button; every destination slides up out of it
+    ///
+    /// The middle of the screen and both side edges are left to the farm.</summary>
     public class Hud
     {
         public RectTransform Root;
-        RectTransform _warehouseBtn;
+        RectTransform _cluster;
+        GameApp _app;
 
-        Text _coin, _energy, _mission, _level, _xpText;
+        Text _coin, _energy, _mission, _level, _xpText, _name;
+        Image _avatarRing, _badge;
+        string _lastFrame = "?", _lastBadge = "?";
         Image _xpFill, _energyFill, _chestIcon;
         Text _chestCount;
-        RectTransform _missionChip;
+        RectTransform _missionChip, _energyChip;
 
         long _lastCoin = -1;
         string _lastMission = "";
 
-        public Vector3 WarehouseWorld => _warehouseBtn != null ? _warehouseBtn.position : Vector3.zero;
+        /// <summary>Where harvested produce flies to: the Kho button when the menu is open, the
+        /// menu button that hides it otherwise.</summary>
+        public Vector3 WarehouseWorld
+        {
+            get
+            {
+                if (_menuOpen && _warehouseSlot != null) return _warehouseSlot.position;
+                return _menuBtn != null ? _menuBtn.position : Vector3.zero;
+            }
+        }
 
         public void Build(RectTransform parent, GameApp app)
         {
+            _app = app;
             Root = UIKit.Node("hud", parent);
             Root.Stretch();
 
             BuildPlayerCard(app);
-            BuildSeasonBar(app);
+            BuildWeather(app);
             BuildCurrencies(app);
-            BuildMissionChip(app);
-            BuildRails(app);
-            BuildActionBar(app);
+            BuildPager(app);
+            BuildMenu(app);
+            BuildPetButton(app);
         }
 
         // ------------------------------------------------------------
-        // Thanh Mùa Vụ — weather and crop tags, in the one free band on screen
+        // weather: one disc, one ring
         // ------------------------------------------------------------
-        RectTransform _season;
-        Image _wIcon, _wProg;
-        Text _wClock, _wName, _wMulA, _wMulB, _tCount, _tClock;
-        readonly List<Image> _tPips = new List<Image>();
-        RectTransform _wNext, _greenBadge;
+        RectTransform _weather, _greenBadge;
+        Image _wIcon, _wRing;
         Text _greenText;
-        Image _wNextIcon;
-        Text _wNextMark;
-        string _lastWClock = "", _lastWName = "";
+        string _lastWName = "";
 
-        /// <summary>Weather and tags share one frame but stay two cells.
+        /// <summary>The weather is a single icon with its hour running out round the rim.
         ///
-        /// They must read as one combined rate — they multiply together — but collapsing them
-        /// into a single number would be a lie: weather multiplies all twenty-eight crops, a tag
-        /// multiplies six. One "x2.4" on the HUD is correct for six crops and wrong for
-        /// twenty-two, and a permanent readout that is wrong most of the time is worse than two
-        /// honest cells. The clocks differ too (one hour against twelve), and one number under
-        /// one countdown asserts one expiry.
+        /// The bar it replaces carried a clock, a name, two percentages, a forecast mark, a tag
+        /// count, six tag pips and a second clock: eight readouts in the one band a player's eye
+        /// crosses on every glance, about a system that changes once an hour. The ring answers
+        /// the only question a glance needs — "how long until it changes?" — and everything else
+        /// is one tap away in the season popup, which already showed all of it.
         ///
-        /// The actual product appears in the three places where the crop is known and the number
-        /// is therefore true: the plant popup, the season sheet, and the harvest.
-        ///
-        /// Anchored TopLeft against the player card, never Top. The notch inset applies to one
-        /// side only, so a Top-anchored bar drifts up to 54 px off centre on a notched phone and
-        /// lands lopsided between two clusters that did not move with it.</summary>
-        void BuildSeasonBar(GameApp app)
+        /// Anchored TopLeft against the player card, never Top: the notch inset applies to one
+        /// side only, so a Top-anchored element drifts off centre on a notched phone.</summary>
+        void BuildWeather(GameApp app)
         {
-            _season = UIKit.Node("season", Root);
-            _season.Anchor(UIKit.TopLeft, new Vector2(376, -14), new Vector2(480, 76));
-            _season.pivot = new Vector2(0, 1);
+            const float D = 74f;
+            _weather = UIKit.Node("weather", Root);
+            _weather.Anchor(UIKit.TopLeft, new Vector2(376, -14), new Vector2(D, D));
+            var fill = SurfaceLook.Add(_weather, Looks.Glass, SurfaceLook.Pill).Fill;
+            fill.raycastTarget = true;
 
-            var bg = UIKit.Round(_season, Theme.Glass, 26, "bg");
-            bg.rectTransform.Stretch();
+            // track, then the remaining hour as a clockwise arc from twelve o'clock
+            var track = UIKit.Img(_weather, Theme.Ring(0.17f), new Color(0f, 0.05f, 0.05f, 0.45f), "track");
+            track.rectTransform.Stretch(5, 5, 5, 5);
+            _wRing = UIKit.Img(_weather, Theme.Ring(0.17f), Color.white, "ring");
+            _wRing.rectTransform.Stretch(5, 5, 5, 5);
+            _wRing.type = Image.Type.Filled;
+            _wRing.fillMethod = Image.FillMethod.Radial360;
+            _wRing.fillOrigin = (int)Image.Origin360.Top;
+            _wRing.fillClockwise = true;
+            _wRing.gameObject.AddComponent<WeatherRing>();
 
-            // 76 tall visually, 96 tall to the finger: the overhang lands in empty sky where
-            // nothing competes for it, and it clears the 88 px minimum target.
-            var hit = UIKit.Node("hit", _season);
-            hit.Anchor(UIKit.Center, Vector2.zero, new Vector2(480, 96));
-            var hitImg = hit.gameObject.AddComponent<Image>();
-            hitImg.color = new Color(0, 0, 0, 0);
-            var btn = hit.gameObject.AddComponent<Button>();
-            btn.targetGraphic = hitImg;
-            btn.onClick.AddListener(() => app.Open(new SeasonPanel(app)));
-
-            // ---- cell A: weather ----
-            _wIcon = UIKit.Img(_season, Art.WeatherIcon(Weather.Sunny), Color.white, "wIcon");
+            _wIcon = UIKit.Img(_weather, Art.WeatherIcon(Weather.Sunny), Color.white, "icon");
             _wIcon.preserveAspect = true;
-            _wIcon.rectTransform.Anchor(UIKit.Left, new Vector2(34, -4), new Vector2(42, 42));
+            _wIcon.rectTransform.Anchor(UIKit.Center, Vector2.zero, new Vector2(38, 38));
 
-            // Greenhouse charges ride on the weather glyph, because bad weather is the only thing
-            // they do anything about. Same corner-badge idiom as the chest count on the flask, and
-            // the bar has no spare width for a cell of its own.
-            _greenBadge = UIKit.Node("green", _season);
-            // Straddles the bar's top edge above the glyph. Parked at y 22 it covered the top of
-            // the weather icon — the one thing on the bar it is meant to annotate.
-            _greenBadge.Anchor(UIKit.Left, new Vector2(24, 36), new Vector2(50, 22));
-            UIKit.Round(_greenBadge, Theme.GreenDeep, 12, "bg").rectTransform.Stretch();
-            var gi = UIKit.Img(_greenBadge, Theme.Skin.Farmhouse, Color.white, "ic");
-            gi.preserveAspect = true;
-            gi.rectTransform.Anchor(UIKit.Left, new Vector2(13, 0), new Vector2(18, 18));
-            _greenText = UIKit.LabelOutlined(_greenBadge, "", 14, Color.white, TextAnchor.MiddleRight);
-            _greenText.rectTransform.Stretch(24, 0, 5, 0);
+            // Greenhouse charges are an item the player owns, not weather information, so they
+            // keep a corner count here — it only exists while charges are left.
+            _greenBadge = UIKit.Node("green", _weather);
+            _greenBadge.Anchor(UIKit.BottomRight, new Vector2(10, -6), new Vector2(46, 22));
+            SurfaceLook.Add(_greenBadge, Badge(Looks.BtnGreen));
+            _greenText = UIKit.LabelOutlined(_greenBadge, "", 14, Color.white, TextAnchor.MiddleCenter, Theme.Hex("#1C7439"));
+            _greenText.rectTransform.Stretch();
             _greenBadge.gameObject.SetActive(false);
 
-            // The countdown is the largest glyph in the bar because it is the only live variable.
-            // The six multiplier sets are a static table a player memorises in a week; the clock
-            // is what drives the one decision weather creates — plant now, or wait for the reroll.
-            _wClock = UIKit.Label(_season, "--:--", 26, Color.white, TextAnchor.MiddleLeft, FontStyle.Bold);
-            _wClock.rectTransform.Anchor(UIKit.Left, new Vector2(110, 15), new Vector2(100, 38));
-
-            var track = UIKit.Round(_season, new Color(1, 1, 1, 0.18f), 6, "wTrack");
-            track.rectTransform.Anchor(UIKit.Left, new Vector2(108, -23), new Vector2(96, 12));
-            _wProg = UIKit.Round(_season, Color.white, 6, "wProg");
-            _wProg.rectTransform.Anchor(UIKit.Left, new Vector2(108, -23), new Vector2(96, 12));
-            _wProg.type = Image.Type.Filled;
-            _wProg.fillMethod = Image.FillMethod.Horizontal;
-
-            _wName = UIKit.LabelOutlined(_season, "", 19, Color.white, TextAnchor.MiddleLeft);
-            _wName.rectTransform.Anchor(UIKit.Left, new Vector2(216, 15), new Vector2(96, 28));
-
-            // Percentages, not multipliers: "chín ↓15%" fits the 138 px budget where
-            // "chín x0.85 · giá x1.10" does not. And the arrow is coloured by BENEFIT rather than
-            // by direction — x0.85 on grow time is good, x0.85 on price is bad, and a bare
-            // multiplier cannot say which.
-            _wMulA = UIKit.Label(_season, "", 15, Theme.Cream2, TextAnchor.MiddleLeft);
-            _wMulA.rectTransform.Anchor(UIKit.Left, new Vector2(216, -23), new Vector2(72, 22));
-            _wMulB = UIKit.Label(_season, "", 15, Theme.Cream2, TextAnchor.MiddleLeft);
-            _wMulB.rectTransform.Anchor(UIKit.Left, new Vector2(290, -23), new Vector2(74, 22));
-
-            _wNext = UIKit.Node("wNext", _season);
-            _wNext.Anchor(UIKit.Left, new Vector2(324, 15), new Vector2(28, 28));
-            UIKit.Img(_wNext, Theme.Circle(), new Color(1, 1, 1, 0.16f), "disc").rectTransform.Stretch();
-            _wNextIcon = UIKit.Img(_wNext, Art.WeatherIcon(Weather.Sunny), Color.white, "ic");
-            _wNextIcon.preserveAspect = true;
-            _wNextIcon.rectTransform.Stretch(5, 5, 5, 5);
-            _wNextIcon.enabled = false;
-            _wNextMark = UIKit.Label(_wNext, "?", 17, new Color(1, 1, 1, 0.8f), TextAnchor.MiddleCenter, FontStyle.Bold);
-            _wNextMark.rectTransform.Stretch();
-
-            var divider = UIKit.Round(_season, new Color(1, 1, 1, 0.16f), 3, "div");
-            divider.rectTransform.Anchor(UIKit.Left, new Vector2(358, 4), new Vector2(2, 48));
-
-            // ---- cell B: tagged crops ----
-            var tIcon = UIKit.Img(_season, Theme.Skin.StarGold, Color.white, "tIcon");
-            tIcon.preserveAspect = true;
-            tIcon.rectTransform.Anchor(UIKit.Left, new Vector2(387, 15), new Vector2(30, 30));
-
-            // Six coloured dots say the SHAPE of today's set at a glance — "today is mostly
-            // price" — without a word of text.
-            for (int i = 0; i < TagSys.TaggedCount; i++)
-            {
-                var pip = UIKit.Round(_season, Color.white, 3, "pip");
-                pip.rectTransform.Anchor(UIKit.Left, new Vector2(374 + i * 6f, -25), new Vector2(4, 4));
-                _tPips.Add(pip);
-            }
-
-            _tCount = UIKit.LabelOutlined(_season, "", 19, Color.white, TextAnchor.MiddleLeft);
-            _tCount.rectTransform.Anchor(UIKit.Left, new Vector2(414, 15), new Vector2(70, 28));
-            _tClock = UIKit.Label(_season, "", 15, Theme.Cream2, TextAnchor.MiddleLeft);
-            _tClock.rectTransform.Anchor(UIKit.Left, new Vector2(414, -23), new Vector2(70, 22));
+            var b = _weather.gameObject.AddComponent<Button>();
+            b.targetGraphic = fill;
+            b.transition = Selectable.Transition.None;
+            b.onClick.AddListener(() => { CloseMenu(); app.Open(new SeasonPanel(app)); });
+            _weather.gameObject.AddComponent<PressFx>();
         }
 
-        static string Pct(float mul, bool higherIsBetter)
+        void RenderWeather()
         {
-            int p = Mathf.RoundToInt((mul - 1f) * 100f);
-            if (p == 0) return "<color=#C9C2B4>—</color>";
-            bool good = higherIsBetter ? p > 0 : p < 0;
-            string hex = good ? "#7ED08A" : "#E88A7A";
-            return $"<color={hex}>{(p > 0 ? "↑" : "↓")}{Mathf.Abs(p)}%</color>";
-        }
-
-        void RenderSeason()
-        {
-            if (_season == null) return;
+            if (_weather == null) return;
             var s = GS.Local;
-            long now = GS.Now;
-
             var w = WeatherSys.Now(s);
             var d = WeatherSys.Def(w);
-
-            long left = WeatherSys.MsLeft(now);
-            string clock = Fmt.Time((int)(left / 1000L));
-            if (clock != _lastWClock) { _wClock.text = clock; _lastWClock = clock; }
-            _wProg.fillAmount = 1f - Mathf.Clamp01(left / (float)WeatherSys.HourMs);
-            _wProg.color = Theme.Hex(d.hex);
-
-            if (d.name != _lastWName)
+            var icon = Art.WeatherIconNow(w, out var tint);
+            string key = d.name + (icon != null ? icon.name : "");
+            if (key != _lastWName)
             {
-                _wName.text = d.name;
-                _wIcon.sprite = Art.WeatherIcon(w);
-                _wIcon.color = Theme.Hex(d.hex);
-                // Sunny is the reference state: every multiplier is 1.0, so the honest readout
-                // is two dashes — which looks like missing data rather than "nothing applies".
-                // Its own rule is more useful there than a pair of blanks.
-                bool neutral = Mathf.Approximately(d.grow, 1f) && Mathf.Approximately(d.sell, 1f);
-                if (neutral)
-                {
-                    _wMulA.text = "<color=#C9C2B4>bình thường</color>";
-                    _wMulB.text = "";
-                }
-                else
-                {
-                    _wMulA.text = "chín " + Pct(d.grow, false);
-                    _wMulB.text = "giá " + Pct(d.sell, true);
-                }
-                _lastWName = d.name;
+                _wIcon.sprite = icon;
+                _wIcon.color = tint;
+                _wRing.color = tint;
+                _lastWName = key;
             }
 
-            bool reveal = WeatherSys.Revealed(s, now);
-            _wNextMark.enabled = !reveal;
-            _wNextIcon.enabled = reveal;
-            if (reveal)
-            {
-                var nx = WeatherSys.Next(s);
-                _wNextIcon.sprite = Art.WeatherIcon(nx);
-                _wNextIcon.color = Theme.Hex(WeatherSys.Def(nx).hex);
-            }
-
-            // The greenhouse counter lives on the weather bar, because bad weather is the only
-            // thing it does anything about. It is not on the wallet: it is not a currency, and it
-            // only exists for a few minutes at a time.
-            if (_greenBadge != null)
-            {
-                bool has = s.greenhouse > 0;
-                if (_greenBadge.gameObject.activeSelf != has) _greenBadge.gameObject.SetActive(has);
-                if (has) _greenText.text = "×" + s.greenhouse;
-            }
-
-            var set = TagSys.Now(s);
-            _tCount.text = set.Count + " cây";
-            _tClock.text = Fmt.Time((int)(TagSys.MsLeft(now) / 1000L));
-            for (int i = 0; i < _tPips.Count; i++)
-            {
-                bool on = i < set.Count;
-                _tPips[i].enabled = on;
-                if (on) _tPips[i].color = Theme.Hex(TagSys.Def(set[i].tag).hex);
-            }
+            bool has = s.greenhouse > 0;
+            if (_greenBadge.gameObject.activeSelf != has) _greenBadge.gameObject.SetActive(has);
+            if (has) _greenText.text = "×" + s.greenhouse;
         }
+
 
         // ------------------------------------------------------------
         // top-left cluster: who you are, and what you are working on
@@ -243,17 +141,28 @@ namespace LQFarm
         void BuildPlayerCard(GameApp app)
         {
             var cluster = UIKit.Node("playerCluster", Root);
-            cluster.Anchor(UIKit.TopLeft, new Vector2(16, -14), new Vector2(344, 122));
+            cluster.Anchor(UIKit.TopLeft, new Vector2(16, -14), new Vector2(344, 176));
+            _cluster = cluster;
 
             // --- identity card ---
             var card = UIKit.Node("card", cluster);
             card.Anchor(UIKit.TopLeft, Vector2.zero, new Vector2(344, 74));
             card.pivot = new Vector2(0, 1);
-            var bg = UIKit.Round(card, Theme.Glass, 26, "bg");
-            bg.rectTransform.Stretch();
+            var cardFill = SurfaceLook.Add(card, Looks.Glass).Fill;
+            // The XP bar lives here, so this is where a player reaches when it fills: the card
+            // opens the upgrade panel.
+            cardFill.raycastTarget = true;
+            var cardBtn = card.gameObject.AddComponent<Button>();
+            cardBtn.targetGraphic = cardFill;
+            cardBtn.transition = Selectable.Transition.None;
+            cardBtn.onClick.AddListener(() => { CloseMenu(); Sfx.Play(SfxId.Tap); app.Open(new UpgradePanel(app)); });
+            card.gameObject.AddComponent<PressFx>();
 
+            // The avatar is a medallion pinned on the pill's left cap: concentric with it, its
+            // ring 6 px proud of the pill's edge. Floating 31 px in from the end, it read as a
+            // photo placed on a bar rather than part of it.
             var av = UIKit.Node("avatar", card);
-            av.Anchor(UIKit.Left, new Vector2(37, 0), new Vector2(64, 64));
+            av.Anchor(UIKit.Left, new Vector2(5, 0), new Vector2(64, 64));
             UIKit.Img(av, Theme.Circle(), Theme.Cream, "disc").rectTransform.Stretch(3, 3, 3, 3);
             var pic = UIKit.Img(av, Theme.Skin.Farmer, Color.white, "pic");
             pic.preserveAspect = true;
@@ -261,21 +170,30 @@ namespace LQFarm
             var ring = UIKit.Img(av, Theme.Skin.AvatarRing, Color.white, "ring");
             ring.preserveAspect = true;
             ring.rectTransform.Stretch(-6, -6, -6, -6);
+            _avatarRing = ring;
 
             var lvBadge = UIKit.Node("lv", av);
             lvBadge.Anchor(UIKit.BottomRight, new Vector2(6, -2), new Vector2(34, 26));
-            UIKit.Round(lvBadge, Theme.AmberDeep, 13, "bg").rectTransform.Stretch();
+            SurfaceLook.Add(lvBadge, Badge(Looks.BtnAmber));
             _level = UIKit.LabelOutlined(lvBadge, "1", 19, Color.white);
             _level.rectTransform.Stretch();
 
+            // a worn badge sits between the portrait and the name
+            _badge = UIKit.Img(card, null, Color.white, "badge");
+            _badge.preserveAspect = true;
+            _badge.rectTransform.Anchor(UIKit.Left, new Vector2(90, 15), new Vector2(26, 26));
+            _badge.enabled = false;
+
             var name = UIKit.LabelOutlined(card, "Nông Trại Của Bạn", 19, Color.white, TextAnchor.MiddleLeft);
-            // The ring is drawn 6 px proud of the 64 px avatar, so its right edge is at 107.
-            // Starting the name at 96 put the "N" underneath it.
-            name.rectTransform.Anchor(UIKit.Left, new Vector2(116, 15), new Vector2(214, 22));
+            _name = name;
+            // The ring is drawn 6 px proud of the 64 px avatar, so its right edge is at 75, and
+            // the level badge overhangs it to 85. Starting the name any closer puts the "N"
+            // underneath one of them.
+            name.rectTransform.Anchor(UIKit.Left, new Vector2(92, 15), new Vector2(234, 28));
             name.rectTransform.pivot = new Vector2(0, 0.5f);
 
             var bar = UIKit.Node("xp", card);
-            bar.Anchor(UIKit.Left, new Vector2(116, -12), new Vector2(214, 22));
+            bar.Anchor(UIKit.Left, new Vector2(92, -13), new Vector2(228, 22));
             bar.pivot = new Vector2(0, 0.5f);
             // TrackDark is a warm brown meant for a cream panel; on the dark glass card it was
             // invisible, so the bar read as a green sliver floating in nothing.
@@ -290,21 +208,22 @@ namespace LQFarm
             strip.pivot = new Vector2(0, 1);
             _missionChip = strip;
 
-            var sbg = UIKit.Round(strip, Theme.Glass, 20, "bg");
-            sbg.rectTransform.Stretch();
+            var sbg = SurfaceLook.Add(strip, Looks.Glass).Fill;
             sbg.raycastTarget = true;
 
             var ic = UIKit.Img(strip, Theme.Skin.Alert, Theme.Amber, "ic");
             ic.preserveAspect = true;
-            ic.rectTransform.Anchor(UIKit.Left, new Vector2(24, 0), new Vector2(24, 24));
+            ic.rectTransform.Anchor(UIKit.Left, new Vector2(16, 0), new Vector2(24, 24));
 
             _mission = UIKit.LabelOutlined(strip, "", 17, Color.white, TextAnchor.MiddleLeft);
-            _mission.rectTransform.Stretch(44, 0, 14, 0);
+            _mission.rectTransform.Stretch(46, 0, 20, 0);
 
             var b = strip.gameObject.AddComponent<Button>();
             b.targetGraphic = sbg;
             b.onClick.AddListener(() => app.Open(new MissionsPanel(app)));
             strip.gameObject.AddComponent<PressFx>();
+
+            BuildActionRow(app, cluster);
         }
 
         // ------------------------------------------------------------
@@ -315,18 +234,24 @@ namespace LQFarm
             var cluster = UIKit.Node("wallet", Root);
             cluster.Anchor(UIKit.TopRight, new Vector2(-16, -14), new Vector2(392, 52));
             cluster.pivot = new Vector2(1, 1);
+            _wallet = cluster;
 
             // --- row 1: magic energy, then coins ---
             var enChip = UIKit.Node("energyChip", cluster);
-            enChip.Anchor(UIKit.TopLeft, Vector2.zero, new Vector2(186, 52));
+            _energyChip = enChip;
+            // 170 + 16 + 206: the coin chip takes the width, because a seven-digit balance is the
+            // number here that grows and the energy readout never passes "1.200/1.200".
+            enChip.Anchor(UIKit.TopLeft, Vector2.zero, new Vector2(170, 52));
             enChip.pivot = new Vector2(0, 1);
-            var enBg = UIKit.Round(enChip, Theme.Glass, 26, "bg");
-            enBg.rectTransform.Stretch();
+            var enBg = SurfaceLook.Add(enChip, Looks.Glass).Fill;
             enBg.raycastTarget = true;
 
+            // Same overhanging token as the coin, so the two chips read as one pair.
             var chestHolder = UIKit.Node("chest", enChip);
-            chestHolder.Anchor(UIKit.Left, new Vector2(28, 0), new Vector2(38, 38));
-            _chestIcon = UIKit.Img(chestHolder, Theme.Skin.NavMagic, Color.white, "ic");
+            chestHolder.Anchor(UIKit.Left, new Vector2(-2, 0), new Vector2(50, 50));
+            // The painted flask from the item set, the same one the shop sells energy under — the
+            // flat white glyph was the only untextured icon left on the HUD.
+            _chestIcon = UIKit.Img(chestHolder, Art.Item("item_energy"), Color.white, "ic");
             _chestIcon.preserveAspect = true;
             _chestIcon.rectTransform.Stretch();
 
@@ -334,14 +259,14 @@ namespace LQFarm
             _chestCount.rectTransform.Anchor(UIKit.BottomRight, new Vector2(6, -4), new Vector2(36, 18));
 
             var enBar = UIKit.Node("bar", enChip);
-            enBar.Anchor(UIKit.Right, new Vector2(-12, -11), new Vector2(112, 12));
+            enBar.Anchor(UIKit.Right, new Vector2(-20, -11), new Vector2(96, 12));
             // TrackGlass, not TrackDark: the brown track is built for cream panels and vanished
             // on the glass chip, so a low energy reading looked like a stray blue pixel.
             _energyFill = UIKit.Bar(enBar, Theme.TrackGlass, Theme.Purple, 6);
             _energyFill.transform.parent.GetComponent<RectTransform>().Stretch();
 
             _energy = UIKit.LabelOutlined(enChip, "0/300", 16, Color.white, TextAnchor.MiddleRight);
-            _energy.rectTransform.Anchor(UIKit.Right, new Vector2(-12, 10), new Vector2(112, 20));
+            _energy.rectTransform.Anchor(UIKit.Right, new Vector2(-18, 9), new Vector2(100, 24));
 
             var enBtn = enChip.gameObject.AddComponent<Button>();
             enBtn.targetGraphic = enBg;
@@ -349,14 +274,13 @@ namespace LQFarm
             enChip.gameObject.AddComponent<PressFx>();
 
             var coinChip = UIKit.Node("coinChip", cluster);
-            coinChip.Anchor(UIKit.TopRight, Vector2.zero, new Vector2(186, 52));
+            coinChip.Anchor(UIKit.TopRight, Vector2.zero, new Vector2(206, 52));
             coinChip.pivot = new Vector2(1, 1);
             _coin = UIKit.Chip(coinChip, Theme.Skin.Coin, "0", Theme.Glass, 206,
                                () => app.Open(new ShopPanel(app)));
             coinChip.GetChild(0).GetComponent<RectTransform>().Stretch();
-            // The chip is 186 wide but Chip() lays its label out for the 206 it was asked for,
-            // leaving 88 px — and "186.400" at 24 px bold is ~95, so every balance past six digits
-            // ran left underneath the coin. Best-fit shrinks the digits instead; best-fit only
+            // 206 - 56 - 54 leaves 96 px of digits, and "1.286.400" at 24 px Black is ~118.
+            // Best-fit shrinks the digits instead of running them under the coin; best-fit only
             // works with Wrap/Truncate, which is harmless for a single number.
             _coin.horizontalOverflow = HorizontalWrapMode.Wrap;
             _coin.verticalOverflow = VerticalWrapMode.Truncate;
@@ -364,379 +288,115 @@ namespace LQFarm
             _coin.resizeTextMinSize = 15;
             _coin.resizeTextMaxSize = 24;
 
-            // The collection chip is gone. It was a permanent readout of a number that moves
-            // a few times a week, sitting in the one cluster a player checks every few seconds,
-            // and it was the third way to reach a panel that already had two. It lives in the
-            // tray now, where a rarely-read number belongs.
-        }
-
-        /// <summary>Kept so Build() reads in layout order; the strip lives in the player cluster.</summary>
-        void BuildMissionChip(GameApp app) { }
-
-        // ------------------------------------------------------------
-        // side rails
-        // ------------------------------------------------------------
-        static void RailPlate(RectTransform rail)
-        {
-            var bg = UIKit.Round(rail, new Color(0.08f, 0.17f, 0.14f, 0.34f), 26, "plate");
-            bg.rectTransform.Stretch(-4, -8, -4, -8);
-        }
-
-        /// <summary>One rail, on the right, five slots.
-        ///
-        /// The old HUD had eleven buttons for eight destinations: shop reachable from the left
-        /// rail AND the coin chip, chests from the rail AND the energy chip, collection from the
-        /// rail AND its own chip, missions from the rail AND the strip. Three destinations were
-        /// free to remove before cutting a single feature.
-        ///
-        /// Deleting the LEFT rail specifically buys three things. Its 112x346 block sat on the
-        /// field's left edge, and once FitFarm accounts for it that width becomes sea gutter — the
-        /// "there is more over there" affordance the island system needs, for free. Two symmetric
-        /// rails is a mobile-web idiom anyway: look at the old screenshot and try to say why
-        /// Rương was on the left and Kho on the right. And a COUNT on a rail button is worth
-        /// strictly more than a second button to the same place, which is how eight destinations
-        /// live behind five buttons with nothing going unnoticed.</summary>
-        void BuildRails(GameApp app)
-        {
-            var right = UIKit.Node("railR", Root);
-            right.Anchor(UIKit.Right, new Vector2(-58, -6), new Vector2(104, 476));
-            RailPlate(right);
-
-            var btns = Rail(right, new (Sprite art, string cap, Color col, Action act)[]
-            {
-                // With the captions gone, colour IS the label — so all five must differ. The skin
-                // has exactly five button faces (green/amber/blue/red/grey) and Theme.Skin.ToneOf
-                // snaps anything else to the nearest of them, so Amber and AmberDeep one slot
-                // apart produced two identical yellow discs, and so would Purple or Teal. One
-                // tone each, no near-misses.
-                (Theme.Skin.NavSeeds, null, Theme.Green,  () => app.Open(new SeedShopPanel(app))),
-                (Theme.Skin.NavStore, null, Theme.Amber,  () => app.Open(new WarehousePanel(app))),
-                (Theme.Skin.NavQuest, null, Theme.Blue,   () => app.Open(new MissionsPanel(app))),
-                (Theme.Skin.NavShop,  null, Theme.Red,    () => app.Open(new ShopPanel(app))),
-                (Theme.Skin.More,     null, Theme.Cream3, ToggleTray),
-            });
-            _warehouseBtn = btns[1];
-            _railDots = new RectTransform[btns.Length];
-            for (int i = 0; i < btns.Length; i++) _railDots[i] = Dot(btns[i]);
-
-            BuildTray(app, right);
-        }
-
-        /// <summary>A count on a rail button, so a destination can say it needs attention without
-        /// needing a second entry point to say it.</summary>
-        static RectTransform Dot(RectTransform slot)
-        {
-            var dot = UIKit.Node("dot", slot);
-            dot.Anchor(UIKit.TopRight, new Vector2(2, 2), new Vector2(26, 26));
-            UIKit.Round(dot, Theme.Red, 13, "bg").rectTransform.Stretch();
-            var t = UIKit.Label(dot, "", 15, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold);
-            t.rectTransform.Stretch();
-            dot.gameObject.SetActive(false);
-            return dot;
-        }
-
-        RectTransform[] _railDots;
-        RectTransform _tray, _trayScrim;
-
-        /// <summary>Everything that is a destination rather than a verb, and is visited rarely
-        /// enough not to earn a permanent slot.</summary>
-        void BuildTray(GameApp app, RectTransform rail)
-        {
-            // An invisible full-screen catcher, so tapping the farm closes the tray instead of
-            // planting a seed under it. It is a sibling BEFORE the tray, so the tray stays on top.
-            _trayScrim = UIKit.Node("trayScrim", Root);
-            _trayScrim.Stretch();
-            var scrim = UIKit.Img(_trayScrim, null, new Color(0, 0, 0, 0.28f), "bg");
-            scrim.rectTransform.Stretch();
-            scrim.raycastTarget = true;
-            var sb = _trayScrim.gameObject.AddComponent<Button>();
-            sb.targetGraphic = scrim;
-            sb.transition = Selectable.Transition.None;
-            sb.onClick.AddListener(HideTray);
-            _trayScrim.gameObject.SetActive(false);
-
-            // rowH 104 put the caption baseline (-103..-124) across the top of the next row's
-            // icon (-122). Vietnamese needs 21 px of line box for a 14 px font, so the row has to
-            // be cell + caption + air, not cell + 20.
-            const float cell = 84f, gap = 12f, pad = 18f, rowH = 114f;
-            var items = new (Sprite art, string cap, Color col, Action act)[]
-            {
-                // One tone each again — ToneOf only has five to give.
-                (Theme.Skin.Chest,      "Rương",    Theme.Amber, () => app.Open(new ChestPanel(app))),
-                (Theme.Skin.NavFriends, "Bạn bè",   Theme.Green, () => app.Open(new FriendsPanel(app))),
-                (Theme.Skin.NavAlbum,   "Sưu tập",  Theme.Red,   () => app.Open(new CollectionPanel(app))),
-                (Theme.Skin.Farmhouse,  "Nâng cấp", Theme.Blue,  () => app.Open(new UpgradePanel(app))),
-                // No "Mùa vụ" here: the season bar across the top already opens that panel, and
-                // adding a second door to it would reintroduce exactly the duplication that
-                // deleting the left rail was about.
-            };
-
-            const int cols = 3;
-            int rows = (items.Length + cols - 1) / cols;
-            float w = pad * 2 + cols * cell + (cols - 1) * gap;
-            float h = pad + rows * rowH + 8f;
-
-            _tray = UIKit.Node("tray", Root);
-            // The rail's left edge is at -110; -118 left the tray touching it. -130 reads as a
-            // panel that opened NEXT TO the rail rather than out of it.
-            _tray.Anchor(UIKit.Right, new Vector2(-130, -6), new Vector2(w, h));
-            UIKit.Round(_tray, Theme.GlassDeep, 24, "bg").rectTransform.Stretch();
-
-            for (int i = 0; i < items.Length; i++)
-            {
-                var it = items[i];
-                int col = i % cols, row = i / cols;
-                float x = pad + col * (cell + gap);
-                float y = -pad - row * rowH;
-
-                var slot = UIKit.Node("t" + i, _tray);
-                slot.Anchor(UIKit.TopLeft, new Vector2(x, y), new Vector2(cell, cell));
-                var b = UIKit.IconBtn(slot, it.art, it.col, 0.52f, () => { HideTray(); it.act(); }, null,
-                                      Theme.Skin.ToneOf(it.col) == Theme.Tone.Grey ? Theme.Ink : (Color?)null);
-                b.GetComponent<RectTransform>().Stretch();
-
-                // 20 px of line box for a 14 px font: Vietnamese stacks two diacritics, so a box
-                // sized to the font clips the top of every "ươ" and "ậ" on the row.
-                var cap = UIKit.Label(_tray, it.cap, 14, Color.white, TextAnchor.UpperCenter);
-                cap.rectTransform.Anchor(UIKit.TopLeft, new Vector2(x - 6, y - cell - 1), new Vector2(cell + 12, 21));
-            }
-
-            _tray.gameObject.SetActive(false);
-        }
-
-        void ToggleTray() { SetTray(!_tray.gameObject.activeSelf); }
-        public void HideTray() { SetTray(false); }
-        /// <summary>Opened by the screenshot pass; the tray has no other scripted entry point.</summary>
-        public void ShowTrayForAudit() { SetTray(true); }
-
-        void SetTray(bool on)
-        {
-            if (_tray == null) return;
-            _tray.gameObject.SetActive(on);
-            _trayScrim.gameObject.SetActive(on);
-            if (on) _tray.SetAsLastSibling();
-        }
-
-        RectTransform[] Rail(RectTransform holder, (Sprite art, string cap, Color col, Action act)[] items)
-        {
-            // 104 -> 92 once the captions are gone. That 12 px per slot is exactly what
-            // makes a fifth slot fit between the wallet cluster and the action bar.
-            const float step = 92f;
-            float total = items.Length * step;
-            var outp = new RectTransform[items.Length];
-
-            for (int i = 0; i < items.Length; i++)
-            {
-                var it = items[i];
-                var slot = UIKit.Node("slot", holder);
-                slot.Anchor(UIKit.Center, new Vector2(0, total / 2f - step * (i + 0.5f)), new Vector2(80, 80));
-                // No captions. They overhung the button below by 7 px, pushed the rail to 6 px
-                // from the safe edge, and are read exactly once per player lifetime.
-                // Dark ink on the grey face; white everywhere else. See IconBtn's iconTint.
-                var b = UIKit.IconBtn(slot, it.art, it.col, 0.52f, it.act, null,
-                                      Theme.Skin.ToneOf(it.col) == Theme.Tone.Grey ? Theme.Ink : (Color?)null);
-                b.GetComponent<RectTransform>().Stretch();
-                outp[i] = slot;
-            }
-            return outp;
         }
 
         // ------------------------------------------------------------
-        // bottom: primary actions
+        // the two bulk verbs, docked under the mission strip
         // ------------------------------------------------------------
-        Text _harvestLbl, _waterLbl, _plantLbl, _islandLbl;
-        Color _harvestInk, _waterInk, _plantInk;
-        Button _harvestBtn, _waterBtn, _plantBtn, _islePrev, _isleNext;
-        GameApp _app;
+        const float PillW = 170f, PillH = 46f, PillGap = 4f;
+        RectTransform _actionRow;
+        SkinButton _harvestBtn, _waterBtn;
+        RectTransform _harvestCount, _waterCount;
 
-        /// <summary>Four slots: three verbs and the island pager.
-        ///
-        /// **Each verb carries its own count**, which is the change that matters. "Thu hoạch tất
-        /// cả" is a promise the game cannot keep — a player taps it with nothing ripe and learns
-        /// the button lies. "Thu hoạch · 7" is a readout first and a button second, so the bottom
-        /// of the screen answers "is there anything to do" without being tapped, and a farm with
-        /// nothing pending says so by going quiet instead of by doing nothing when pressed.
-        ///
-        /// **Tưới joins them.** Watering was the one mechanic with no bulk verb, so it was the
-        /// one players skipped, which made the whole timed-window system decorative. It sits in
-        /// the middle because that is where the thumb is.
-        ///
-        /// **Nâng cấp leaves.** It is a destination, not a verb, and it held a permanent slot
-        /// next to two actions taken hundreds of times a session for one taken once an hour.
-        /// It is in the tray.
-        ///
-        /// **The pager is here and not on the map** because the farm the player is looking at is
-        /// the farm the three verbs act on. Naming it next to them is what keeps "Thu hoạch · 7"
-        /// unambiguous when there are six islands.</summary>
-        RectTransform _bar, _pagerRt;
-        const float VerbW = 196f, PagerW = 268f, BarGap = 12f;
-        string _barLayout = "";
-
-        /// <summary>Builds the three bulk verbs and the pager. Which verbs are SHOWN is decided
-        /// every render — see <see cref="RenderActions"/>.</summary>
-        void BuildActionBar(GameApp app)
+        static Look Tint(Look l, float toward, Color target)
         {
-            _app = app;
-            _bar = UIKit.Node("actions", Root);
-            _bar.Anchor(UIKit.Bottom, new Vector2(0, 14), new Vector2(PagerW, 72));
-
-            // a plate so the row reads as one bar instead of buttons floating on the island edge
-            var plate = UIKit.Round(_bar, new Color(0.08f, 0.17f, 0.14f, 0.32f), 28, "plate");
-            plate.rectTransform.Stretch(-14, -10, -14, -10);
-
-            _harvestBtn = UIKit.Btn(_bar, "Thu hoạch", Theme.Green, Theme.GreenDark, 23, 26,
-                                    () => { HideTray(); app.HarvestAll(); });
-            _harvestLbl = UIKit.BtnLabel(_harvestBtn);
-            _harvestInk = _harvestLbl.color;
-
-            _waterBtn = UIKit.Btn(_bar, "Tưới", Theme.Blue, Theme.BlueDeep, 23, 26,
-                                  () => { HideTray(); app.WaterAll(); });
-            _waterLbl = UIKit.BtnLabel(_waterBtn);
-            _waterInk = _waterLbl.color;
-
-            _plantBtn = UIKit.Btn(_bar, "Gieo", Theme.Amber, Theme.AmberDeep, 23, 26,
-                                  () => { HideTray(); app.PlantAll(); });
-            _plantLbl = UIKit.BtnLabel(_plantBtn);
-            _plantInk = _plantLbl.color;
-
-            foreach (var b in new[] { _harvestBtn, _waterBtn, _plantBtn })
-            {
-                b.GetComponent<RectTransform>().Anchor(UIKit.Center, Vector2.zero, new Vector2(VerbW, 72));
-                b.gameObject.SetActive(false);
-            }
-
-            BuildPager(_bar, app, Vector2.zero, PagerW);
-            _pagerRt = (RectTransform)_bar.Find("pager");
+            l.top = Color.Lerp(l.top, target, toward).Alpha(l.top.a);
+            l.bottom = Color.Lerp(l.bottom, target, toward).Alpha(l.bottom.a);
+            return l;
         }
 
-        public void SetActionBarVisible(bool on)
+        static Look ActionLook(string top, string bottom, string edge)
         {
-            if (_bar != null && _bar.gameObject.activeSelf != on) _bar.gameObject.SetActive(on);
+            var l = Looks.Glass;
+            l.top = Theme.Hex(top).Alpha(0.96f);
+            l.bottom = Theme.Hex(bottom).Alpha(0.97f);
+            l.edge = Theme.Hex(edge).Alpha(0.7f);
+            l.inkLine = Theme.Hex(edge);
+            return l;
         }
 
-        void BuildPager(RectTransform bar, GameApp app, Vector2 pos, float w)
-        {
-            var pager = UIKit.Node("pager", bar);
-            pager.Anchor(UIKit.Center, pos, new Vector2(w, 72));
-            var bg = UIKit.Round(pager, Theme.Glass, 26, "bg");
-            bg.rectTransform.Stretch();
-
-            _islePrev = UIKit.IconBtn(pager, Theme.Skin.ArrowLeft, Theme.Cream3, 0.44f,
-                                      () => { HideTray(); app.StepIsland(-1); });
-            _islePrev.GetComponent<RectTransform>().Anchor(UIKit.Left, new Vector2(5, 0), new Vector2(56, 56));
-
-            _isleNext = UIKit.IconBtn(pager, Theme.Skin.ArrowRight, Theme.Cream3, 0.44f,
-                                      () => { HideTray(); app.StepIsland(1); });
-            _isleNext.GetComponent<RectTransform>().Anchor(UIKit.Right, new Vector2(-5, 0), new Vector2(56, 56));
-
-            // The name is a button too: it opens the whole archipelago, which is what a player
-            // reaching for the island control at level 20 actually wants.
-            var mid = UIKit.Node("name", pager);
-            // 268 - 2x(56 + 5) - 8 of air = 138: room for eight Vietnamese characters at 20 px.
-            mid.Anchor(UIKit.Center, Vector2.zero, new Vector2(w - 130, 60));
-            var midBg = UIKit.Round(mid, new Color(1, 1, 1, 0.001f), 20, "hit");
-            midBg.rectTransform.Stretch();
-            midBg.raycastTarget = true;
-            _islandLbl = UIKit.LabelOutlined(mid, "Vườn Nhà", 20, Color.white);
-            _islandLbl.rectTransform.Stretch();
-            var mb = mid.gameObject.AddComponent<Button>();
-            mb.targetGraphic = midBg;
-            mb.onClick.AddListener(() => { HideTray(); app.ShowArchipelago(); });
-            mid.gameObject.AddComponent<PressFx>();
-        }
-
-        /// <summary>A verb that has nothing to act on stays visible but goes quiet — dimmed and
-        /// uninteractable rather than hidden. A bar that changes its button count as the farm
-        /// changes would move the other three under a thumb already on its way down.</summary>
-        /// <summary>Dims by fading the label's OWN colour, never by forcing white.
+        /// <summary>Thu hoạch and Tưới nước, as a pair of pills in the mission strip's own
+        /// material — the same shape and height family, each in its own colour so the verbs never
+        /// read as more missions.
         ///
-        /// The first version forced white and "Gieo" — dark ink on amber by design — became white
-        /// lettering on a washed-out amber plate, i.e. invisible exactly when it was disabled.
-        /// The ink a button was built with is captured once at build time and faded from there.</summary>
-        static void SetVerb(Button b, Text lbl, Color ink, string word, int n)
-        {
-            string want = n > 0 ? word + " · " + n : word;
-            if (lbl.text != want) lbl.text = want;
-            bool on = n > 0;
-            if (b.interactable != on)
-            {
-                b.interactable = on;
-                lbl.color = on ? ink : ink.Alpha(0.5f);
-            }
-        }
-
-        // ------------------------------------------------------------
-        // refresh
-        // ------------------------------------------------------------
-        public void Render(bool snap = false)
-        {
-            _level.text = GS.Local.lv.ToString();
-
-            if (snap || _lastCoin < 0) _coin.text = Fmt.N(GS.Local.coin);
-            else if (_lastCoin != GS.Local.coin) Tween.Count(_coin, GS.Local.coin);
-            _lastCoin = GS.Local.coin;
-
-            int need = GS.Local.XpNeed;
-            _xpFill.fillAmount = Mathf.Clamp01(GS.Local.xp / (float)need);
-            _xpText.text = Fmt.N(Math.Min(GS.Local.xp, need)) + " / " + Fmt.N(need);
-
-            int goal = GS.Local.EnergyGoal;
-            _energyFill.fillAmount = Mathf.Clamp01(GS.Local.energy / (float)goal);
-            _energy.text = Fmt.N(GS.Local.energy) + "/" + Fmt.N(goal);
-
-            int owned = 0;
-            for (int i = 0; i < GS.Local.chests.Length; i++) owned += GS.Local.chests[i];
-            _chestCount.text = owned > 0 ? "×" + owned : "";
-            _chestIcon.color = owned > 0 ? Color.white : new Color(1, 1, 1, 0.72f);
-
-            RenderSeason();
-            RenderActions();
-            RenderDots(owned);
-
-            // --- the mission strip is conditional ---
-            // A permanent "Đã hoàn thành mọi nhiệm vụ" is a 344 px banner whose only job is to
-            // say there is nothing to say. When there is no active mission the strip goes away
-            // and the player card sits alone, which is itself the message.
-            var t = GS.Local.ActiveMission(out var pr);
-            bool show = t != null;
-            if (_missionChip.gameObject.activeSelf != show) _missionChip.gameObject.SetActive(show);
-            if (show)
-            {
-                string mt = t.t + "  (" + pr.p + "/" + t.need + ")";
-                if (mt != _lastMission) { _mission.text = mt; _lastMission = mt; }
-            }
-        }
-
-        /// <summary>The bulk verbs appear only when unlocked AND when there is something for them
-        /// to do.
+        /// They live with the mission because the mission is almost always one of them ("Thu
+        /// hoạch cà rốt (0/6)"), and top left is where the eye already goes for "what should I do".
+        /// There is no Gieo: an empty bed is planted by tapping it, which opens the seed sheet.
         ///
-        /// A dimmed "Tưới" with nothing to water was a button the player learned to ignore — and
-        /// a learned-to-ignore button is also ignored on the one hour it matters. Now the bar is
-        /// just the island pager most of the time, and a verb stepping into it IS the
-        /// notification: crops are ripe, a window opened, a bed is empty. The pager stays put at
-        /// the right end, so the thumb target that never changes never moves.</summary>
+        /// A verb shows only while it has plots to act on (2026-09-15: the owner asked for the
+        /// empty, grey pair to go), and pops in when a crop ripens or a window opens.</summary>
+        void BuildActionRow(GameApp app, RectTransform cluster)
+        {
+            _actionRow = UIKit.Node("actions", cluster);
+            _actionRow.Anchor(UIKit.TopLeft, new Vector2(0, -126), new Vector2(PillW * 2 + PillGap, PillH));
+            _actionRow.pivot = new Vector2(0, 1);
+
+            var harvest = ActionLook("#45B35E", "#1F6E36", "#0D3D1D");
+            var water = ActionLook("#3D96DC", "#1C5896", "#0A2C4C");
+            var off = ActionLook("#66716F", "#3E4847", "#1C2322");
+            off.top.a = 0.9f; off.bottom.a = 0.92f; off.rim.a = 0.12f;
+            off.ink = new Color(1f, 1f, 1f, 0.55f);
+
+            _harvestBtn = ActionPill(_actionRow, 0f, Art.Item("icon_harvest"), "Thu hoạch", harvest, off,
+                                     () => { CloseMenu(); app.HarvestAll(); }, out _harvestCount);
+            _waterBtn = ActionPill(_actionRow, PillW + PillGap, Art.Item("item_can"), "Tưới nước", water, off,
+                                   () => { CloseMenu(); app.WaterAll(); }, out _waterCount);
+        }
+
+        SkinButton ActionPill(RectTransform row, float x, Sprite icon, string word, Look on, Look off,
+                              Action act, out RectTransform count)
+        {
+            var root = UIKit.Node(word, row);
+            root.Anchor(UIKit.Left, new Vector2(x, 0), new Vector2(PillW, PillH));
+            var surf = SurfaceLook.Add(root, on);
+            surf.RaycastBody();
+
+            // Anchor(Left) is the LEFT edge: the icon spans 8..44, the word starts at 48.
+            var ic = UIKit.Img(root, icon, Color.white, "icon");
+            ic.preserveAspect = true;
+            ic.rectTransform.Anchor(UIKit.Left, new Vector2(8, 1), new Vector2(36, 36));
+
+            var lab = UIKit.LabelOutlined(root, word, 18, Color.white, TextAnchor.MiddleLeft, on.inkLine);
+            lab.rectTransform.Stretch(48, 0, 10, 1);
+
+            // how many plots the verb would act on: a red count pinned to the corner, the same
+            // badge the menu uses, so "something is waiting" has one look on the whole HUD
+            count = Dot(root);
+
+            var b = root.gameObject.AddComponent<SkinButton>();
+            b.transition = Selectable.Transition.None;
+            b.targetGraphic = surf.Fill;
+            b.Bind(surf, on, off, lab, Tint(on, 0.14f, Color.white), Tint(on, 0.18f, Color.black));
+            b.onClick.AddListener(() => act());
+            root.gameObject.AddComponent<PressFx>();
+            return b;
+        }
+
         void RenderActions()
         {
-            if (_harvestLbl == null || _app == null || _app.Farm == null) return;
+            if (_harvestBtn == null || _app == null || _app.Farm == null) return;
             var farm = _app.Farm;
             var s = GS.Local;
 
-            int ready = farm.ReadyPlots().Count;
-            int water = farm.WaterablePlots().Count;
-            int empty = farm.EmptyPlots().Count;
+            bool hasH = QuickActions.HarvestUnlocked(s);
+            bool hasW = QuickActions.WaterUnlocked(s);
+            int ready = hasH ? farm.ReadyPlots().Count : 0;
+            int water = hasW ? farm.WaterablePlots().Count : 0;
 
-            bool showH = QuickActions.HarvestUnlocked(s) && ready > 0;
-            bool showW = QuickActions.WaterUnlocked(s) && water > 0;
-            bool showP = QuickActions.PlantUnlocked(s) && empty > 0;
+            // Shown only while there is something to do: a grey "Thu hoạch" and "Tưới nước" sat on
+            // the screen for the whole of every wait, two big buttons saying "nothing".
+            bool showH = hasH && ready > 0, showW = hasW && water > 0;
+            SetVerb(_harvestBtn, _harvestCount, showH, ready);
+            SetVerb(_waterBtn, _waterCount, showW, water);
 
-            SetVerb(_harvestBtn, _harvestLbl, _harvestInk, "Thu hoạch", ready);
-            SetVerb(_waterBtn,   _waterLbl,   _waterInk,   "Tưới",      water);
-            // The count is empty BEDS: the seed sheet this opens can buy seeds, so "no seeds in
-            // the bag" is no longer a reason to hide the verb.
-            SetVerb(_plantBtn,   _plantLbl,   _plantInk,   "Gieo",      empty);
+            // a lone Tưới slides left so the row has no hole in it
+            var wrt = (RectTransform)_waterBtn.transform;
+            float wx = showH ? PillW + PillGap : 0f;
+            if (!Mathf.Approximately(wrt.anchoredPosition.x, wx)) wrt.anchoredPosition = new Vector2(wx, 0);
 
-            string layout = (showH ? "H" : "") + (showW ? "W" : "") + (showP ? "P" : "");
-            if (layout != _barLayout) LayoutBar(showH, showW, showP, layout);
+            // docked straight under the strip, or under the card when there is no active mission
+            float y = _missionChip.gameObject.activeSelf ? -126f : -80f;
+            if (!Mathf.Approximately(_actionRow.anchoredPosition.y, y)) _actionRow.anchoredPosition = new Vector2(0, y);
 
             int cur = farm.CurrentIsland;
             int max = Mathf.Min(IslandSys.Max, farm.IslandCount) - 1;
@@ -746,71 +406,601 @@ namespace LQFarm
             _isleNext.interactable = cur < max;
         }
 
-        void LayoutBar(bool h, bool w, bool p, string layout)
+        static void SetVerb(SkinButton b, RectTransform count, bool unlocked, int n)
         {
-            var shown = new List<Button>();
-            if (h) shown.Add(_harvestBtn);
-            if (w) shown.Add(_waterBtn);
-            if (p) shown.Add(_plantBtn);
-
-            float total = shown.Count * (VerbW + BarGap) + PagerW;
-            _bar.sizeDelta = new Vector2(total, 72);
-            float x = -total / 2f;
-            foreach (var b in new[] { _harvestBtn, _waterBtn, _plantBtn })
+            if (b.gameObject.activeSelf != unlocked)
             {
-                bool on = shown.Contains(b);
-                if (!on) { b.gameObject.SetActive(false); continue; }
-                var rt = b.GetComponent<RectTransform>();
-                rt.anchoredPosition = new Vector2(x + VerbW / 2f, 0);
-                x += VerbW + BarGap;
-                // a verb that just stepped in pops, so the change reads as news
-                if (!b.gameObject.activeSelf) { b.gameObject.SetActive(true); Tween.PopIn(rt, 0.26f, 0.6f); }
+                b.gameObject.SetActive(unlocked);
+                if (unlocked) Tween.PopIn(b.transform, 0.26f, 0.6f);
             }
-            if (_pagerRt != null) _pagerRt.anchoredPosition = new Vector2(x + PagerW / 2f, 0);
-            _barLayout = layout;
+            if (!unlocked) return;
+            bool on = n > 0;
+            if (b.interactable != on)
+            {
+                b.interactable = on;
+                // the palette goes grey on its own; the painted icon has to be told
+                var ic = b.transform.Find("icon")?.GetComponent<Image>();
+                if (ic != null) ic.color = on ? Color.white : new Color(1f, 1f, 1f, 0.42f);
+            }
+            SetDot(count, n);
         }
 
-        /// <summary>Badges on the rail. This is what lets five buttons cover eight destinations
-        /// without anything going unnoticed — a destination that needs attention says so where it
-        /// lives, instead of earning a second button somewhere else to say it.</summary>
+        // ------------------------------------------------------------
+        // bottom left: the island pager
+        // ------------------------------------------------------------
+        const float PagerW = 268f;
+        RectTransform _pager;
+        Text _islandLbl;
+        Button _islePrev, _isleNext;
+
+        void BuildPager(GameApp app)
+        {
+            var pager = UIKit.Node("pager", Root);
+            pager.Anchor(UIKit.BottomLeft, new Vector2(16, 16), new Vector2(PagerW, 72));
+            _pager = pager;
+            SurfaceLook.Add(pager, Looks.Glass);
+
+            // 56 inside a 72 pill, 8 px from each end: concentric with the caps.
+            _islePrev = UIKit.IconBtn(pager, Theme.Skin.ArrowLeft, Theme.Cream3, 0.44f,
+                                      () => { CloseMenu(); app.StepIsland(-1); });
+            _islePrev.GetComponent<RectTransform>().Anchor(UIKit.Left, new Vector2(8, 0), new Vector2(56, 56));
+
+            _isleNext = UIKit.IconBtn(pager, Theme.Skin.ArrowRight, Theme.Cream3, 0.44f,
+                                      () => { CloseMenu(); app.StepIsland(1); });
+            _isleNext.GetComponent<RectTransform>().Anchor(UIKit.Right, new Vector2(-8, 0), new Vector2(56, 56));
+
+            // The name is a button too: it opens the whole archipelago, which is what a player
+            // reaching for the island control at level 20 actually wants.
+            var mid = UIKit.Node("name", pager);
+            // 268 - 2x(56 + 8) = 140: room for eight Vietnamese characters at 20 px.
+            mid.Anchor(UIKit.Center, Vector2.zero, new Vector2(PagerW - 130, 60));
+            var midBg = UIKit.Round(mid, new Color(1, 1, 1, 0.001f), 20, "hit");
+            midBg.rectTransform.Stretch();
+            midBg.raycastTarget = true;
+            _islandLbl = UIKit.LabelOutlined(mid, "Vườn Nhà", 20, Color.white);
+            _islandLbl.rectTransform.Stretch();
+            var mb = mid.gameObject.AddComponent<Button>();
+            mb.targetGraphic = midBg;
+            mb.onClick.AddListener(() => { CloseMenu(); app.ShowArchipelago(); });
+            mid.gameObject.AddComponent<PressFx>();
+        }
+
+        /// <summary>Hidden while the seed sheet covers the bottom of the screen.</summary>
+        public void SetActionBarVisible(bool on)
+        {
+            if (_pager != null && _pager.gameObject.activeSelf != on) _pager.gameObject.SetActive(on);
+        }
+
+        // ------------------------------------------------------------
+        // bottom right: the menu
+        // ------------------------------------------------------------
+        /// <summary>A small pill badge (level, greenhouse count) in a button tone: the button's
+        /// palette without its lip or drop shadow, which at 22 px would be most of the badge.</summary>
+        static Look Badge(Look btn)
+        {
+            btn.lip = 0f;
+            btn.shadow = Color.clear;
+            btn.rimW = 1.5f;
+            btn.edgeW = 1.5f;
+            return btn;
+        }
+
+        /// <summary>A count pinned to a button's corner.</summary>
+        static RectTransform Dot(RectTransform slot)
+        {
+            var dot = UIKit.Node("dot", slot);
+            dot.Anchor(UIKit.TopRight, new Vector2(6, 6), new Vector2(26, 26));
+            UIKit.Round(dot, Theme.Red, 13, "bg").rectTransform.Stretch();
+            var t = UIKit.LabelOutlined(dot, "", 15, Color.white, TextAnchor.MiddleCenter, Theme.RedDeep);
+            t.rectTransform.Stretch();
+            dot.gameObject.SetActive(false);
+            return dot;
+        }
+
+        static void SetDot(RectTransform dot, int n)
+        {
+            if (dot == null) return;
+            bool on = n != 0;
+            if (dot.gameObject.activeSelf != on) dot.gameObject.SetActive(on);
+            if (!on) return;
+            var t = dot.GetComponentInChildren<Text>();
+            // -1 means "look here" with no number attached
+            string want = n > 0 ? (n > 9 ? "9+" : n.ToString()) : "!";
+            if (t.text != want) t.text = want;
+        }
+
+        const float MenuD = 80f, MenuMargin = 16f;
+        const float CellD = 70f, ColW = 96f, RowH = 102f, PanelPad = 14f;
+
+        RectTransform _menuBtn, _menuPanel, _menuScrim, _warehouseSlot, _menuDot;
+        Image _menuIcon;
+        CanvasGroup _menuGroup;
+        readonly List<RectTransform> _menuSlots = new List<RectTransform>();
+        readonly List<int> _menuRows = new List<int>();
+
+        /// <summary>The one setting the game has: sound on or off, at the top of the menu. A
+        /// settings screen for a single switch would be a panel that exists to hold a button.</summary>
+        void BuildSoundToggle(RectTransform panel, float w, float headerH)
+        {
+            var row = UIKit.Node("sound", panel);
+            row.Anchor(UIKit.TopLeft, new Vector2(PanelPad, -PanelPad + 2f), new Vector2(w - PanelPad * 2f, headerH - 8f));
+
+            // Tài khoản: sign-in, cloud sync, linking an email — once-in-a-while, so a pill in the
+            // header rather than a cell in the grid of daily destinations
+            var acc = UIKit.Node("account", row);
+            acc.Anchor(UIKit.Left, new Vector2(-2, 0), new Vector2(112, 34));
+            var accLook = Looks.BtnBlue;
+            accLook.lip = 3f;
+            var accSurf = SurfaceLook.Add(acc, accLook, SurfaceLook.Pill, pressable: true);
+            accSurf.RaycastBody();
+            var accIcon = UIKit.Img(accSurf.Face, Art.Load("Art/gen/account"), Color.white, "ic");
+            accIcon.preserveAspect = true;
+            accIcon.rectTransform.Anchor(UIKit.Left, new Vector2(10, 1), new Vector2(17, 17));
+            var accLabel = UIKit.LabelOutlined(accSurf.Face, "Tài khoản", 15, Color.white, TextAnchor.MiddleCenter, accLook.inkLine);
+            accLabel.rectTransform.Anchor(UIKit.Left, new Vector2(29, 1), new Vector2(76, 24));
+            var accBtn = acc.gameObject.AddComponent<Button>();
+            accBtn.targetGraphic = accSurf.Fill;
+            accBtn.transition = Selectable.Transition.None;
+            accBtn.onClick.AddListener(() => { Sfx.Play(SfxId.Tap); CloseMenu(); _app.Open(new AccountPanel(_app)); });
+            acc.gameObject.AddComponent<PressFx>();
+            _accountDot = Dot(acc);
+            _accountBtn = acc;
+
+            // Âm thanh and Nhạc nền: one round chip each. Tap toggles; off is a faded face and a struck
+            // glyph. Two switches did not fit beside the account pill.
+            _musicChip = ToggleChip(row, 0f, "music");
+            _soundChip = ToggleChip(row, -40f, "sound");
+            _soundChip.onClick.AddListener(() =>
+            {
+                Sfx.Enabled = !Sfx.Enabled;
+                if (Sfx.Enabled) Sfx.Play(SfxId.Toggle);
+                RenderSoundToggle();
+            });
+            _musicChip.onClick.AddListener(() =>
+            {
+                Music.Enabled = !Music.Enabled;
+                Sfx.Play(SfxId.Toggle);
+                RenderSoundToggle();
+            });
+            RenderSoundToggle();
+        }
+
+        Button _soundChip, _musicChip;
+
+        static Button ToggleChip(RectTransform row, float right, string name)
+        {
+            var node = UIKit.Node(name, row);
+            node.Anchor(UIKit.Right, new Vector2(right, 0), new Vector2(36, 36));
+            var face = UIKit.Img(node, null, Color.white, "face");
+            face.rectTransform.Stretch();
+            Chrome.Shape(face, 18f);
+            face.raycastTarget = true;
+            var icon = UIKit.Img(node, null, Color.white, "icon");
+            icon.preserveAspect = true;
+            icon.raycastTarget = false;
+            icon.rectTransform.Anchor(UIKit.Center, Vector2.zero, new Vector2(22, 22));
+            var b = node.gameObject.AddComponent<Button>();
+            b.targetGraphic = face;
+            b.transition = Selectable.Transition.None;
+            node.gameObject.AddComponent<PressFx>();
+            return b;
+        }
+
+        static void PaintChip(Button chip, bool on, string art)
+        {
+            if (chip == null) return;
+            var face = chip.transform.Find("face").GetComponent<Image>();
+            var icon = chip.transform.Find("icon").GetComponent<Image>();
+            face.color = on ? Theme.Hex("#3FAF5E") : new Color(0f, 0.05f, 0.05f, 0.45f);
+            icon.sprite = Art.Load("Art/gen/" + art + (on ? "_on" : "_off"));
+            icon.color = on ? Color.white : new Color(1f, 1f, 1f, 0.55f);
+        }
+
+        void RenderSoundToggle()
+        {
+            PaintChip(_soundChip, Sfx.Enabled, "sound");
+            PaintChip(_musicChip, Music.Enabled, "music");
+        }
+        RectTransform _accountDot, _accountBtn;
+        public RectTransform AccountButton => _accountBtn;
+        readonly Dictionary<string, RectTransform> _menuDots = new Dictionary<string, RectTransform>();
+        bool _menuOpen;
+        Coroutine _menuAnim;
+
+        /// <summary>Every destination behind one button in the bottom-right corner.
+        ///
+        /// The rail it replaces was a permanent column of five discs down the right edge of the
+        /// farm, and one of them opened a second tray of four more. Both levels are one grid now,
+        /// two columns by four rows, sliding up out of the button. The column nearest the edge
+        /// holds what is visited every session (seeds, the warehouse, the shop, missions); the
+        /// inner one what is visited now and then. Captions are back: in a menu that is opened
+        /// on purpose, a label costs nothing and saves the guess.
+        ///
+        /// Anything that needs attention badges its own cell AND the menu button, so closing the
+        /// menu never hides that something is waiting.</summary>
+        void BuildMenu(GameApp app)
+        {
+            // Catches a tap anywhere else, so tapping the farm closes the menu instead of planting
+            // a seed under it. Invisible: the menu should not dim the farm it sits on.
+            _menuScrim = UIKit.Node("menuScrim", Root);
+            _menuScrim.Stretch();
+            var scrim = UIKit.Img(_menuScrim, null, new Color(0, 0, 0, 0f), "bg");
+            scrim.rectTransform.Stretch();
+            scrim.raycastTarget = true;
+            var sb = _menuScrim.gameObject.AddComponent<Button>();
+            sb.targetGraphic = scrim;
+            sb.transition = Selectable.Transition.None;
+            sb.onClick.AddListener(CloseMenu);
+            _menuScrim.gameObject.SetActive(false);
+
+            // (column, row from the top, ...) — column 1 is the one against the screen edge
+            var items = new (int col, int row, string key, Sprite art, string cap, Color tone, Action act)[]
+            {
+                (1, 0, "quest",   Theme.Skin.NavQuest,   "Nhiệm vụ", Theme.Blue,  () => app.Open(new MissionsPanel(app))),
+                (1, 1, "shop",    Theme.Skin.NavShop,    "Cửa hàng", Theme.Red,   () => app.Open(new ShopPanel(app))),
+                (1, 2, "store",   Theme.Skin.NavStore,   "Kho",      Theme.Amber, () => app.Open(new WarehousePanel(app))),
+                (1, 3, "seeds",   Theme.Skin.NavSeeds,   "Hạt giống", Theme.Green, () => app.Open(new SeedShopPanel(app))),
+                (0, 0, "upgrade", Theme.Skin.NavUpgrade, "Nâng cấp", Theme.Blue,  () => app.Open(new UpgradePanel(app))),
+                (0, 1, "album",   Theme.Skin.NavAlbum,   "Sưu tập",  Theme.Red,   () => app.Open(new CollectionPanel(app))),
+                (0, 2, "friends", Theme.Skin.NavFriends, "Bạn bè",   Theme.Green, () => app.Open(new FriendsPanel(app))),
+                (0, 3, "chest",   Art.Item("chest_1"),   "Rương",    Theme.Amber, () => app.Open(new ChestPanel(app))),
+            };
+
+            const float HeaderH = 50f, FooterH = 54f;
+            float w = PanelPad * 2f + ColW * 2f;
+            float h = PanelPad + HeaderH + RowH * 4f + 4f + FooterH;
+            _menuPanel = UIKit.Node("menu", Root);
+            _menuPanel.Anchor(UIKit.BottomRight, new Vector2(-MenuMargin + 4f, MenuMargin + MenuD + 14f), new Vector2(w, h));
+            // glass a touch lighter than the HUD chips: it is laid over the farm, not beside it
+            var glass = Looks.Glass;
+            glass.top.a = 0.88f; glass.bottom.a = 0.92f;
+            glass.blur = 18f; glass.drop = new Vector2(0f, -6f);
+            SurfaceLook.Add(_menuPanel, glass, 28f).Fill.raycastTarget = true;
+            _menuGroup = _menuPanel.gameObject.AddComponent<CanvasGroup>();
+            BuildSoundToggle(_menuPanel, w, HeaderH);
+
+            foreach (var it in items)
+            {
+                var slot = UIKit.Node("m_" + it.key, _menuPanel);
+                slot.Anchor(UIKit.TopLeft, new Vector2(PanelPad + it.col * ColW, -PanelPad - HeaderH - it.row * RowH), new Vector2(ColW, RowH));
+                _menuRows.Add(it.row);
+                slot.gameObject.AddComponent<CanvasGroup>();
+
+                var disc = UIKit.Node("disc", slot);
+                disc.Anchor(UIKit.Top, new Vector2(0, 0), new Vector2(CellD, CellD));
+                var act = it.act;
+                bool grey = Theme.Skin.ToneOf(it.tone) == Theme.Tone.Grey;
+                var btn = UIKit.IconBtn(disc, it.art, it.tone, it.key == "chest" ? 0.66f : 0.52f,
+                                        () => { CloseMenu(); act(); }, null, grey ? Theme.Ink : (Color?)null);
+                btn.GetComponent<RectTransform>().Stretch();
+
+                // 24 px of line box for a 16 px font: Vietnamese stacks two diacritics.
+                var cap = UIKit.LabelOutlined(slot, it.cap, 16, Color.white, TextAnchor.UpperCenter);
+                cap.rectTransform.Anchor(UIKit.Top, new Vector2(0, -CellD - 3f), new Vector2(ColW, 24));
+
+                _menuDots[it.key] = Dot(disc);
+                _menuSlots.Add(slot);
+                if (it.key == "store") _warehouseSlot = disc;
+            }
+            // The rules and the gift-code field. A footer rather than more cells: places a player
+            // looks once, not destinations visited every session.
+            float half = (w - PanelPad * 2f - 8f) / 2f;
+            var guide = UIKit.Btn(_menuPanel, "Hướng dẫn", Theme.Blue, Theme.BlueDeep, 15, 18,
+                                  () => { CloseMenu(); app.Open(new GuidePanel(app)); });
+            guide.GetComponent<RectTransform>().Anchor(UIKit.BottomLeft, new Vector2(PanelPad, PanelPad), new Vector2(half, FooterH - 10f));
+            _guideBtn = (RectTransform)guide.transform;
+            var code = UIKit.Btn(_menuPanel, "Nhập code", Theme.Amber, Theme.AmberDeep, 15, 18,
+                                 () => { CloseMenu(); app.Open(new CodePanel(app)); });
+            code.GetComponent<RectTransform>().Anchor(UIKit.BottomRight, new Vector2(-PanelPad, PanelPad), new Vector2(half, FooterH - 10f));
+
+            _menuPanel.gameObject.SetActive(false);
+
+            var mbHolder = UIKit.Node("menuBtn", Root);
+            mbHolder.Anchor(UIKit.BottomRight, new Vector2(-MenuMargin, MenuMargin), new Vector2(MenuD, MenuD));
+            var mb = UIKit.IconBtn(mbHolder, Theme.Skin.More, Theme.Cream3, 0.5f, ToggleMenu, null, Theme.Ink);
+            mb.GetComponent<RectTransform>().Stretch();
+            _menuIcon = mb.transform.Find("face/icon")?.GetComponent<Image>();
+            _menuBtn = mbHolder;
+            _menuDot = Dot(mbHolder);
+        }
+
+        RectTransform _wallet;
+
+        /// <summary>One cluster of the HUD as the arrival cinematic brings it in: slid in from its own
+        /// edge (<see cref="from"/> is the offset it starts at, in HUD units), or popped in place.</summary>
+        public struct EntrancePart
+        {
+            public RectTransform rt;
+            public Vector2 from;
+            public float delay;
+            public bool pop;
+        }
+
+        /// <summary>The clusters in the order they arrive (see <see cref="EnterCinematic"/>): the
+        /// player card from the left, the wallet from the right, the pager and the corner buttons up
+        /// from the bottom, and the weather disc popping last between them. Each starts a little past
+        /// its own edge — far enough to be off screen, not so far that it streaks.</summary>
+        public List<EntrancePart> EntranceParts()
+        {
+            var list = new List<EntrancePart>(6);
+            void Add(RectTransform rt, Vector2 from, float delay, bool pop = false)
+            {
+                if (rt != null) list.Add(new EntrancePart { rt = rt, from = from, delay = delay, pop = pop });
+            }
+            Add(_cluster, new Vector2(-(16f + 344f + 24f), 0f), 0.00f);
+            Add(_wallet, new Vector2(16f + 392f + 24f, 0f), 0.06f);
+            Add(_pager, new Vector2(0f, -(16f + 72f + 24f)), 0.12f);
+            Add(_petBtn, new Vector2(0f, -(16f + MenuD + 30f)), 0.18f);
+            Add(_menuBtn, new Vector2(0f, -(16f + MenuD + 30f)), 0.23f);
+            Add(_weather, Vector2.zero, 0.26f, true);
+            return list;
+        }
+
+        // ---- what the tutorial points at ----
+        public bool MenuOpen => _menuOpen;
+        public RectTransform MenuButton => _menuBtn;
+        public RectTransform MissionStrip => _missionChip;
+        public RectTransform HarvestPill => _harvestBtn != null ? (RectTransform)_harvestBtn.transform : null;
+        public RectTransform WaterPill => _waterBtn != null ? (RectTransform)_waterBtn.transform : null;
+        public RectTransform WeatherDisc => _weather;
+        public RectTransform EnergyChip => _energyChip;
+        public RectTransform PagerNext => _isleNext != null ? (RectTransform)_isleNext.transform : null;
+        public RectTransform GuideButton => _guideBtn;
+        public RectTransform MenuPanel => _menuPanel;
+        RectTransform _guideBtn;
+        /// <summary>A destination's disc in the menu grid, by key ("store", "upgrade"…).</summary>
+        public RectTransform MenuCell(string key)
+        {
+            foreach (var slot in _menuSlots)
+                if (slot.name == "m_" + key) return slot.GetChild(0) as RectTransform;
+            return null;
+        }
+
+        void ToggleMenu() { SetMenu(!_menuOpen); }
+        public void CloseMenu() { SetMenu(false); }
+        /// <summary>Opened by the screenshot pass.</summary>
+        public void OpenMenuForAudit() { SetMenu(true, true); }
+        /// <summary>The same as tapping the button: animated. For the screenshot pass.</summary>
+        public void OpenMenuAnimated() { SetMenu(true); }
+        /// <summary>The same as tapping the weather disc. For the screenshot pass.</summary>
+        public void TapWeatherForAudit() { _weather.GetComponent<Button>().onClick.Invoke(); }
+
+        /// <summary>Hidden (and closed) while the seed sheet covers the bottom of the screen.</summary>
+        public void SetRailVisible(bool on)
+        {
+            if (!on) SetMenu(false, true);
+            if (_menuBtn != null && _menuBtn.gameObject.activeSelf != on) _menuBtn.gameObject.SetActive(on);
+            _railVisible = on;
+            RenderPet();
+        }
+
+        // ------------------------------------------------------------
+        // bottom right, beside the menu: the pet
+        // ------------------------------------------------------------
+        RectTransform _petBtn, _petDot;
+        Image _petFace;
+        Text _petTimer;
+        bool _railVisible = true;
+
+        /// <summary>The pet's own button, next to the menu: its face, and a small clock to its next
+        /// patrol. A pet is the one thing on the farm that acts on its own, so when it will act is
+        /// worth a glance; opening a menu to find out is not. Absent until pets unlock.</summary>
+        void BuildPetButton(GameApp app)
+        {
+            _petBtn = UIKit.Node("petBtn", Root);
+            _petBtn.Anchor(UIKit.BottomRight, new Vector2(-MenuMargin - MenuD - 16f, MenuMargin), new Vector2(MenuD, MenuD));
+            var b = UIKit.IconBtn(_petBtn, null, Theme.Purple, 0.5f, () => { CloseMenu(); app.Open(new PetPanel(app)); });
+            b.GetComponent<RectTransform>().Stretch();
+            _petFace = UIKit.Img(_petBtn, null, Color.white, "face");
+            _petFace.preserveAspect = true;
+            _petFace.raycastTarget = false;
+            _petFace.rectTransform.Anchor(UIKit.Center, new Vector2(0, 6), new Vector2(MenuD * 0.8f, MenuD * 0.8f));
+
+            var chip = UIKit.Node("timer", _petBtn);
+            chip.Anchor(UIKit.Bottom, new Vector2(0, -10), new Vector2(74, 26));
+            var look = Looks.Glass;
+            SurfaceLook.Add(chip, look, SurfaceLook.Pill);
+            _petTimer = UIKit.LabelOutlined(chip, "", 15, Color.white, TextAnchor.MiddleCenter);
+            _petTimer.rectTransform.Stretch();
+            _petDot = Dot(_petBtn);
+            _petBtn.gameObject.SetActive(false);
+        }
+
+        public RectTransform PetButton => _petBtn;
+
+        void RenderPet()
+        {
+            if (_petBtn == null) return;
+            var s = GS.Local;
+            bool on = PetSys.Unlocked(s) && _railVisible;
+            if (_petBtn.gameObject.activeSelf != on) _petBtn.gameObject.SetActive(on);
+            if (!on) return;
+            var pet = PetSys.Active(s);
+            var face = pet != null ? Art.Load("Art/pets/" + pet.id + "/idle") : Art.Item("item_egg");
+            if (_petFace.sprite != face) _petFace.sprite = face;
+            // eggs waiting to hatch: the gift-code stock, or the free first egg
+            SetDot(_petDot, s.petFreeEggs > 0 ? Mathf.Min(99, s.petFreeEggs) : s.petEggs == 0 ? 1 : 0);
+            string t = "";
+            if (pet != null && _app != null && _app.Pets != null)
+            {
+                int sec = _app.Pets.SecondsToPatrol;
+                t = _app.Pets.Busy && sec == 0 ? "..." : (sec / 60) + ":" + (sec % 60).ToString("00");
+            }
+            else t = "Ấp";
+            if (_petTimer.text != t) _petTimer.text = t;
+        }
+
+        void SetMenu(bool open, bool instant = false)
+        {
+            if (_menuPanel == null || (open == _menuOpen && !instant)) return;
+            _menuOpen = open;
+            _menuScrim.gameObject.SetActive(open);
+            if (_menuIcon != null)
+            {
+                // The pack's cross is a heavy glyph; at the grid icon's size and full ink it read
+                // as a black blot. Smaller and in soft ink it reads as "close".
+                _menuIcon.sprite = open ? Theme.Skin.IconCross : Theme.Skin.More;
+                _menuIcon.color = open ? Theme.InkSoft : Theme.Ink;
+                var fit = _menuIcon.GetComponent<AspectFill>();
+                if (fit != null) { fit.scale = open ? 0.36f : 0.5f; fit.Apply(); }
+            }
+            if (open)
+            {
+                _menuScrim.SetAsLastSibling();
+                _menuPanel.SetAsLastSibling();
+                _menuBtn.SetAsLastSibling();
+            }
+            if (!instant) Sfx.Play(open ? SfxId.MenuOpen : SfxId.MenuClose);
+            if (_menuAnim != null) Tween.Kill(_menuAnim);
+            _menuAnim = Tween.Run(MenuRoutine(open, instant));
+        }
+
+        /// <summary>Open: the panel rises 48 px out of the button while it fades in, and the rows
+        /// follow it up from the bottom row, 25 ms apart. Close: everything drops back in 0.14 s.
+        /// Short on purpose — this is opened dozens of times a session.</summary>
+        IEnumerator MenuRoutine(bool open, bool instant)
+        {
+            var baseY = MenuMargin + MenuD + 14f;
+            const float rise = 48f;
+            if (open) _menuPanel.gameObject.SetActive(true);
+
+            float time = instant ? 0f : (open ? 0.22f : 0.14f);
+            float from = _menuGroup.alpha;
+            float fromY = _menuPanel.anchoredPosition.y;
+            float toY = open ? baseY : baseY - rise;
+            if (open && !instant && from <= 0.01f) fromY = baseY - rise;
+
+            for (float t = 0; t < time; t += Time.unscaledDeltaTime)
+            {
+                float k = Mathf.Clamp01(t / time);
+                float e = open ? Tween.EaseOut(k) : k * k;
+                _menuGroup.alpha = Mathf.Lerp(from, open ? 1f : 0f, e);
+                _menuPanel.anchoredPosition = new Vector2(_menuPanel.anchoredPosition.x, Mathf.Lerp(fromY, toY, e));
+                for (int i = 0; i < _menuSlots.Count; i++)
+                {
+                    var slot = _menuSlots[i];
+                    int rowFromBottom = 3 - _menuRows[i];
+                    float delay = open ? rowFromBottom * 0.025f : 0f;
+                    float sk = open ? Tween.EaseOut(Mathf.Clamp01((t - delay) / (time - 0.075f))) : 1f - e;
+                    slot.GetComponent<CanvasGroup>().alpha = sk;
+                    var cell = slot.GetChild(0) as RectTransform;
+                    cell.anchoredPosition = new Vector2(0, -(1f - sk) * 18f);
+                }
+                yield return null;
+            }
+
+            _menuGroup.alpha = open ? 1f : 0f;
+            _menuPanel.anchoredPosition = new Vector2(_menuPanel.anchoredPosition.x, toY);
+            foreach (var slot in _menuSlots)
+            {
+                slot.GetComponent<CanvasGroup>().alpha = open ? 1f : 0f;
+                ((RectTransform)slot.GetChild(0)).anchoredPosition = Vector2.zero;
+            }
+            if (!open) _menuPanel.gameObject.SetActive(false);
+            _menuAnim = null;
+        }
+
+        /// <summary>Badges in the menu, and their sum on the menu button.</summary>
         void RenderDots(int chests)
         {
-            if (_railDots == null) return;
+            if (_menuDot == null) return;
 
             // seeds: nothing to plant is worth a nudge, but only once the farm has somewhere to
             // put them — otherwise a new player is nagged about a problem they do not have
             int seeds = 0;
             foreach (var kv in GS.Local.seeds) seeds += kv.Value;
             bool needSeeds = seeds == 0 && _app != null && _app.Farm != null && _app.Farm.EmptyPlots().Count > 0;
-            SetDot(0, needSeeds ? -1 : 0);
 
-            // warehouse: full enough that the next harvest would be wasted
-            SetDot(1, 0);
-
-            // missions: contracts ready to claim
             int claimable = 0;
             foreach (var m in GS.Local.contracts) if (!m.Empty && m.p >= m.need) claimable++;
             if (GS.Local.ActiveMission(out var mp) is Task at && at != null && mp.p >= at.need) claimable++;
-            SetDot(2, claimable);
 
-            // shop: nothing periodic yet, so nothing to claim
-            SetDot(3, 0);
+            // enough XP and coins to level: the one upgrade nobody should sit on unaware of
+            var s = GS.Local;
+            bool canLevel = s.xp >= s.XpNeed && s.coin >= GameData.Level(s.lv).cost;
 
-            // the tray: chests are the only thing inside it that expires on the player's patience
-            SetDot(4, chests);
+            SetDot(_menuDots["seeds"], needSeeds ? -1 : 0);
+            SetDot(_menuDots["quest"], claimable);
+            SetDot(_menuDots["chest"], chests);
+            SetDot(_menuDots["upgrade"], canLevel ? -1 : 0);
+            // the account only asks for attention when saving to it is actually failing
+            SetDot(_accountDot, Supa.SignedIn && (CloudSync.State == SyncState.Error || CloudSync.State == SyncState.Conflict) ? -1 : 0);
+
+            int total = claimable + chests;
+            SetDot(_menuDot, total > 0 ? total : (needSeeds || canLevel ? -1 : 0));
         }
 
-        void SetDot(int slot, int n)
+        /// <summary>The worn frame replaces the portrait ring (drawn a little larger: the ornaments
+        /// sit outside it), and a worn badge pushes the name along by its width.</summary>
+        void RenderCosmetics()
         {
-            if (slot >= _railDots.Length) return;
-            var dot = _railDots[slot];
-            bool on = n != 0;
-            if (dot.gameObject.activeSelf != on) dot.gameObject.SetActive(on);
-            if (!on) return;
-            var t = dot.GetComponentInChildren<Text>();
-            // -1 means "look here" with no number attached
-            t.text = n > 0 ? (n > 9 ? "9+" : n.ToString()) : "!";
+            var s = GS.Local;
+            string frame = Cosmetics.Worn(s, CosmeticSlot.Frame);
+            if (frame != _lastFrame)
+            {
+                _lastFrame = frame;
+                var c = frame != null ? Cosmetics.Get(frame) : null;
+                _avatarRing.sprite = c != null ? Art.Item(c.art) : Theme.Skin.AvatarRing;
+                float pad = c != null ? -12f : -6f;
+                _avatarRing.rectTransform.Stretch(pad, pad, pad, pad);
+            }
+            string badge = Cosmetics.Worn(s, CosmeticSlot.Badge);
+            if (badge != _lastBadge)
+            {
+                _lastBadge = badge;
+                var c = badge != null ? Cosmetics.Get(badge) : null;
+                _badge.enabled = c != null;
+                if (c != null) _badge.sprite = Art.Item(c.art);
+                _name.rectTransform.anchoredPosition = new Vector2(c != null ? 122f : 92f, 15f);
+                _name.rectTransform.sizeDelta = new Vector2(c != null ? 204f : 234f, 28f);
+            }
         }
 
+        // ------------------------------------------------------------
+        // refresh
+        // ------------------------------------------------------------
+        public void Render(bool snap = false)
+        {
+            _level.text = GS.Local.lv.ToString();
+            RenderCosmetics();
+
+            // counting up digit by digit only reads below ten million; past that the chip says "22 tỷ"
+            if (snap || _lastCoin < 0 || GS.Local.coin >= 10_000_000L) _coin.text = Fmt.Short(GS.Local.coin);
+            else if (_lastCoin != GS.Local.coin) Tween.Count(_coin, GS.Local.coin);
+            _lastCoin = GS.Local.coin;
+
+            int need = GS.Local.XpNeed;
+            _xpFill.fillAmount = Mathf.Clamp01(GS.Local.xp / (float)need);
+            // a full bar says what to do with it, instead of a number that stopped moving
+            string xpLine = GS.Local.xp >= need ? "Đủ XP · chạm để nâng cấp" : Fmt.N(GS.Local.xp) + " / " + Fmt.N(need);
+            if (_xpText.text != xpLine) _xpText.text = xpLine;
+
+            int goal = GS.Local.EnergyGoal;
+            _energyFill.fillAmount = Mathf.Clamp01(GS.Local.energy / (float)goal);
+            _energy.text = Fmt.N(GS.Local.energy) + "/" + Fmt.N(goal);
+
+            int owned = 0;
+            for (int i = 0; i < GS.Local.chests.Length; i++) owned += GS.Local.chests[i];
+            _chestCount.text = owned > 0 ? "×" + owned : "";
+            RenderPet();
+            _chestIcon.color = owned > 0 ? Color.white : new Color(1, 1, 1, 0.72f);
+
+            // --- the mission strip is conditional ---
+            // A permanent "Đã hoàn thành mọi nhiệm vụ" is a 344 px banner whose only job is to
+            // say there is nothing to say. When there is no active mission the strip goes away
+            // and the verbs move up under the player card.
+            var t = GS.Local.ActiveMission(out var pr);
+            bool show = t != null;
+            if (_missionChip.gameObject.activeSelf != show) _missionChip.gameObject.SetActive(show);
+            if (show)
+            {
+                string mt = t.t + "  (" + pr.p + "/" + t.need + ")";
+                if (mt != _lastMission) { _mission.text = mt; _lastMission = mt; }
+            }
+
+            RenderWeather();
+            RenderActions();
+            RenderDots(owned);
+        }
     }
 }

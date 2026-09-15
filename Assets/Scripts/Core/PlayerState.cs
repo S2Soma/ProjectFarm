@@ -30,8 +30,19 @@ namespace LQFarm
         /// reference for it.</summary>
         public long createdAt;
 
+        /// <summary>True once this state came from the save file (or a deliberate new game). Never
+        /// saved itself.
+        ///
+        /// A state that was never loaded must never be written: in the Editor, Unity recompiling
+        /// scripts during Play re-creates every static — GS.Local becomes a blank level-1 farm —
+        /// while the running game keeps autosaving every five seconds, and that once overwrote a
+        /// level-12 save with an empty one. See <see cref="SaveIO.Save"/>.</summary>
+        [System.NonSerialized] public bool loaded;
+
         // ---------------- currency ----------------
-        public int lv = 1, coin = 5000;
+        public int lv = 1;
+        /// <summary>long, not int: a gift code hands out 22 tỷ, and int stops at 2,1 tỷ.</summary>
+        public long coin = 5000;
         public long xp, energy;
 
         // ---------------- land ----------------
@@ -62,11 +73,34 @@ namespace LQFarm
         public readonly HashSet<string> claimedSets = new HashSet<string>();
         public readonly HashSet<int> claimedMs = new HashSet<int>();
         public readonly HashSet<string> shopBought = new HashSet<string>();
+        /// <summary>Worn cosmetics, slot name → item id (see <see cref="Cosmetics"/>).</summary>
+        public readonly Dictionary<string, string> equipped = new Dictionary<string, string>();
         public readonly HashSet<string> visited = new HashSet<string>();
         public Stats stats = new Stats();
+
+        // ---------------- help ----------------
+        /// <summary>The first-run tutorial's step, by name (see <c>Tutorial.Step</c>). "" means the
+        /// save predates the tutorial: a farm that has already planted is treated as done, one that
+        /// has not starts at the welcome. Stored as a name, never an ordinal, so steps can be
+        /// added or reordered without reinterpreting old saves.</summary>
+        public string tutorial = "";
+        /// <summary>One-time contextual tips already shown.</summary>
+        public readonly HashSet<string> tipsSeen = new HashSet<string>();
+        /// <summary>Gift codes this farm has redeemed (<see cref="GiftCodes"/>).</summary>
+        public readonly HashSet<string> redeemedCodes = new HashSet<string>();
+
+        /// <summary>Thú cưng (<see cref="PetSys"/>): pet id → level, the one following the player,
+        /// eggs hatched, eggs since the last Sử thi or better, snacks eaten.</summary>
+        public readonly Dictionary<string, int> pets = new Dictionary<string, int>();
+        public string petActive = "";
+        public int petEggs, petPity, petSnacks;
+        /// <summary>Eggs already paid for (gift codes): hatched before any coin is asked.</summary>
+        public int petFreeEggs;
         public int stealLeft = 20;
         public long day;
         public long buffMutateUntil;
+        /// <summary>Bùa kinh nghiệm: harvest XP is doubled until this time.</summary>
+        public long buffXpUntil;
         /// <summary>Weather is visible this far ahead — see <see cref="ShopSys.ForecastMs"/>.</summary>
         public long forecastUntil;
         /// <summary>Plantings still shielded from bad weather.</summary>
@@ -137,25 +171,39 @@ namespace LQFarm
             return Mathf.RoundToInt(SellPrice(p.crop, p.variant) * Mathf.Max(0.01f, p.sellMul));
         }
 
-        public int XpFor(Seed s, int variant)     { return Mathf.RoundToInt(s.xp * Art.Elem(variant).xp); }
+        public int XpFor(Seed s, int variant)
+        {
+            IslandSys.Perks(this, out _, out _, out float perkXp, out _);
+            return Mathf.RoundToInt(s.xp * Art.Elem(variant).xp * perkXp);
+        }
         public int EnergyFor(Seed s, int variant) { return Mathf.RoundToInt(EnergyGain(s.en) * Art.Elem(variant).energy); }
-        public float GrowTime(Seed s)             { return Mathf.Max(6f, Mathf.Round(s.grow * (1f - Info.growCut))); }
+
+        /// <summary>Grow time in fair weather: the crop's base time, less the level perk and the
+        /// islands' speed perk, rounded to something readable and never past the 24-hour ceiling.</summary>
+        public float GrowTime(Seed s)
+        {
+            IslandSys.Perks(this, out _, out float perkGrow, out _, out _);
+            return Mathf.Min(GameData.MaxGrowSeconds, GameData.NiceSeconds(s.grow * (1f - Info.growCut) * perkGrow));
+        }
 
         /// <summary>Grow time as it will actually be: weather at plant, then the mutation tier.
         ///
         /// A better mutation takes longer, and since the tier is rolled AT PLANT the player can
         /// see it from the first growth stage. That turns mutation from a slot machine pulled at
         /// harvest into anticipation — and it is the only way the extra time can exist at all,
-        /// because a duration cannot be changed after the fact without rewriting the plot.</summary>
+        /// because a duration cannot be changed after the fact without rewriting the plot.
+        ///
+        /// **This is the one place a duration is decided, and it never returns more than
+        /// <see cref="GameData.MaxGrowSeconds"/>.** A 24-hour avocado planted in a drought, or a
+        /// legendary one, is still ripe tomorrow at the same time: the slower weather and the extra
+        /// mutation time simply cannot push it past the ceiling.</summary>
         public float GrowTimeIn(Seed s, Weather w, int variant = 0, bool sheltered = false)
         {
             var wd = sheltered ? WeatherSys.Sheltered(w) : WeatherSys.Def(w);
-            float baseSec = Mathf.Max(6f, Mathf.Round(GrowTime(s) * wd.grow));
+            float baseSec = GameData.NiceSeconds(GrowTime(s) * wd.grow);
             var el = Art.Elem(variant);
-            if (el.grow <= 1f) return baseSec;
-
-            float add = Mathf.Min(baseSec * (el.grow - 1f), Art.MaxMutationGrowAddSeconds);
-            return Mathf.Round(baseSec + add);
+            float add = el.grow <= 1f ? 0f : Mathf.Min(baseSec * (el.grow - 1f), Art.MaxMutationGrowAddSeconds);
+            return Mathf.Min(GameData.MaxGrowSeconds, GameData.NiceSeconds(baseSec + add));
         }
 
         /// <summary>Fruits this plot will produce. Frozen at plant so the popup can promise it.</summary>
@@ -177,10 +225,20 @@ namespace LQFarm
         {
             var s = GameData.Get(cropId);
             if (s == null) return 0;
-            return Mathf.RoundToInt(s.sell * (1f + Info.priceUp) * Art.Elem(variant).sell);
+            // the islands' sale perks (+5% Đảo Nước, …) were advertised on every island and applied
+            // nowhere; they are read here, where every coin of a harvest is priced
+            IslandSys.Perks(this, out float perkSell, out _, out _, out _);
+            return Mathf.RoundToInt(s.sell * (1f + Info.priceUp) * Art.Elem(variant).sell * perkSell);
         }
         public int EnergyGain(int baseAmount)     { return Mathf.RoundToInt(baseAmount * (1f + Info.energyUp)); }
-        public float MutateChance                 => Info.mutate + (buffMutateUntil > GS.Now ? 0.3f : 0f);
+        public float MutateChance
+        {
+            get
+            {
+                IslandSys.Perks(this, out _, out _, out _, out float perkMutate);
+                return Info.mutate + perkMutate + (buffMutateUntil > GS.Now ? 0.3f : 0f);
+            }
+        }
 
         /// <summary>Mutation chance for one planting, after weather and the crop's tag.
         ///
@@ -267,11 +325,11 @@ namespace LQFarm
         // ================================================================
         // currency
         // ================================================================
-        public void AddCoin(int n) { coin = Mathf.Max(0, coin + n); }
+        public void AddCoin(long n) { coin = System.Math.Max(0L, coin + n); }
 
         /// <summary>XP accumulates but never levels the farm on its own — that is what the
         /// upgrade button does.</summary>
-        public void AddXp(int n) { xp += n; }
+        public void AddXp(long n) { xp = System.Math.Max(0L, xp + n); }
 
         public bool LevelUp()
         {
@@ -285,27 +343,63 @@ namespace LQFarm
             return true;
         }
 
+        /// <summary>Energy in; every time the bar fills, a chest whose kind is rolled.
+        ///
+        /// The bar used to fill toward a fixed 300 / 600 / 1.200 / 3.000 and the kind came from
+        /// the level alone — so chests felt rare early, and from level 20 every single one was
+        /// legendary, which made the best chest the most ordinary thing in the game. The goal now
+        /// follows the farm (<see cref="EnergyGoal"/>) and the kind is a roll
+        /// (<see cref="ChestOdds"/>): mostly common, legendary a few percent at any level.</summary>
         public void AddEnergy(int n)
         {
             energy += n;
-            int tier = ChestTier();
-            while (energy >= GameData.Chests[tier].need)
+            int goal = EnergyGoal;
+            for (int guard = 0; guard < 50 && energy >= goal; guard++)
             {
-                energy -= GameData.Chests[tier].need;
-                chests[tier]++;
+                energy -= goal;
+                chests[RollChestTier(UnityEngine.Random.value)]++;
             }
-            if (energy > 99999) energy = 99999;
+            if (energy > 999999) energy = 999999;
         }
 
-        /// <summary>Which chest the energy bar is currently filling.</summary>
-        public int ChestTier()
+        /// <summary>Odds of each chest kind (thường, quý, thần kỳ, huyền thoại) at a level. Legendary
+        /// goes from 1% to 3%, magic from 6% to 12%, rare from 20% to 30%.</summary>
+        public static float[] ChestOdds(int level)
         {
-            if (lv >= 20) return 3;
-            if (lv >= 12) return 2;
-            if (lv >= 6)  return 1;
+            float t = Mathf.Clamp01((level - 1) / 29f);
+            float legend = Mathf.Lerp(0.01f, 0.03f, t);
+            float magic = Mathf.Lerp(0.06f, 0.12f, t);
+            float rare = Mathf.Lerp(0.20f, 0.30f, t);
+            return new[] { 1f - legend - magic - rare, rare, magic, legend };
+        }
+
+        public int RollChestTier(float roll)
+        {
+            var odds = ChestOdds(lv);
+            float acc = 0f;
+            for (int i = 0; i < odds.Length; i++) { acc += odds[i]; if (roll < acc) return i; }
             return 0;
         }
-        public int EnergyGoal => GameData.Chests[ChestTier()].need;
+
+        /// <summary>The best chest kind this level can roll — kept for the chest panel's default tab.</summary>
+        public int ChestTier() { return 0; }
+
+        /// <summary>Energy one chest takes: about three sweeps of the whole farm early on, down to one
+        /// and a half at level 30 — each sweep being every open plot planted, watered once and
+        /// harvested with the best crop that grows within <see cref="MissionSys.UnitHours"/> (the
+        /// crop UNIT is measured on: a 24-hour crop's energy would make the goal a week of farming).</summary>
+        public int EnergyGoal
+        {
+            get
+            {
+                int bestEn = 2;
+                float slot = MissionSys.UnitHours * 3600f;
+                foreach (var sd in GameData.Seeds) if (sd.lv <= lv && !sd.big && sd.grow <= slot && sd.en > bestEn) bestEn = sd.en;
+                float perSweep = Mathf.Max(6, OpenPlots) * (EnergyGain(bestEn) + 3f);
+                float sweeps = Mathf.Lerp(3f, 1.5f, Mathf.Clamp01((lv - 1) / 29f));
+                return Mathf.Max(60, Mathf.RoundToInt(perSweep * sweeps / 10f) * 10);
+            }
+        }
 
         // ================================================================
         // inventory
@@ -392,6 +486,57 @@ namespace LQFarm
         // ================================================================
         /// <summary>Make sure the state has a record for this island, locked, so tribute can be
         /// paid into it long before it opens.</summary>
+        /// <summary>Sell the whole warehouse. Returns the coins; <paramref name="count"/> is the
+        /// pieces sold. (Bán sỉ, and the journey simulation.)</summary>
+        public long SellAll(out int count)
+        {
+            long total = 0;
+            count = 0;
+            foreach (var it in StoreList())
+            {
+                total += (long)it.price * it.n;
+                count += it.n;
+                TrackCrop("sellCrop", it.crop, it.n);
+            }
+            store.Clear();
+            AddCoin(total);
+            Track("sell", count);
+            return total;
+        }
+
+        /// <summary>A common chest's coins, in UNIT: min + roll × span (the better kinds multiply it).</summary>
+        public const float ChestUnitsMin = 3f, ChestUnitsSpan = 4f;
+
+        /// <summary>Open every chest of a tier: coins, seed packets (into <paramref name="got"/>)
+        /// and a little energy. <paramref name="rand"/> is 0..1 — Unity's in game, seeded in tests.</summary>
+        public long OpenChests(int tier, System.Func<float> rand, Dictionary<string, int> got)
+        {
+            int n = chests[tier];
+            if (n <= 0) return 0;
+            float[] mul = { 1f, 2f, 3.5f, 7f };
+            float[] rareChance = { 0.10f, 0.20f, 0.25f, 1f };
+            // quoted in UNIT like every other reward: a flat 600–2.400 was a level at level 1 and
+            // pocket change by level 20
+            int unit = MissionSys.Unit(this);
+            long coinGot = 0;
+            for (int k = 0; k < n; k++)
+            {
+                coinGot += Mathf.RoundToInt(unit * (ChestUnitsMin + rand() * ChestUnitsSpan) * mul[tier]);
+                bool rare = rand() < rareChance[tier];
+                var pool = GameData.Seeds.Where(sd => !sd.big && sd.lv <= lv + (rare ? 4 : 0) && (rare ? sd.r >= 2 : sd.r <= 1)).ToList();
+                if (pool.Count == 0) pool = GameData.Seeds.ToList();
+                var pick = pool[Mathf.Min(pool.Count - 1, (int)(rand() * pool.Count))];
+                int qty = rare ? 2 : 3;
+                AddSeed(pick.id, qty);
+                if (got != null) { got.TryGetValue(pick.id, out int had); got[pick.id] = had + qty; }
+            }
+            chests[tier] = 0;
+            AddCoin(coinGot);
+            Track("chest", n);
+            AddEnergy(EnergyGain(n * 3));
+            return coinGot;
+        }
+
         public Island EnsureIsland(int index)
         {
             while (islands.Count <= index) islands.Add(new Island(islands.Count, false));
@@ -413,7 +558,17 @@ namespace LQFarm
                 // of the shared map — so it needs tiles to draw, and giving it an empty list just
                 // means every render path has to special-case it.
                 var isl = EnsureIsland(i);
+                isl.id = i;
                 while (isl.plots.Count < IslandSys.PlotsPerIsland) isl.plots.Add(new Plot());
+                // the layout is data, not save state: stamped on every load
+                for (int k = 0; k < isl.plots.Count; k++)
+                {
+                    var kind = IslandSys.KindOf(i, k);
+                    var p = isl.plots[k];
+                    p.big = kind == PlotKind.Big;
+                    p.none = kind == PlotKind.None;
+                    if (p.none) { p.locked = true; p.crop = null; }
+                }
                 if (i > 0 && !isl.unlocked) continue;
                 for (int k = 0; k < isl.plots.Count; k++)
                     if (IslandSys.StartsUnlocked(i, k)) isl.plots[k].locked = false;
@@ -436,14 +591,14 @@ namespace LQFarm
             int open = IslandSys.OpenCount(isl);
             price = IslandSys.PlotPrice(island, open);
             needLv = IslandSys.PlotLevel(island, open);
-            return open < IslandSys.PlotsPerIsland && lv >= needLv && coin >= price;
+            return open < IslandSys.SlotCount(island) && lv >= needLv && coin >= price;
         }
 
         /// <summary>Buy the plot the player tapped, at the price the ladder is currently at.</summary>
         public bool BuyPlot(int island, int slot)
         {
             var isl = EnsureIsland(island);
-            if (slot < 0 || slot >= isl.plots.Count || !isl.plots[slot].locked) return false;
+            if (slot < 0 || slot >= isl.plots.Count || !isl.plots[slot].locked || isl.plots[slot].none) return false;
             if (!PlotBuyable(island, out int price, out _)) return false;
             AddCoin(-price);
             isl.plots[slot].locked = false;
@@ -537,24 +692,11 @@ namespace LQFarm
             rec.claimed = true;
             rec.p = t.need;
 
-            // Chapter rewards are quoted in UNIT and therefore recomputed; dailies keep their
-            // authored numbers, because they are meant to stay a small, steady trickle.
-            if (isDaily) { AddCoin(t.coin); AddXp(t.xp); }
-            else
-            {
-                int idx = IndexInChapter(t);
-                AddCoin(MissionSys.ChapterCoin(this, idx));
-                AddXp(MissionSys.ChapterXp(this, idx));
-            }
+            // every reward is quoted in UNIT, so it keeps its meaning as the economy grows
+            int coin = MissionSys.TaskCoin(this, t, isDaily), xpGain = MissionSys.TaskXp(this, t, isDaily);
+            AddCoin(coin);
+            AddXp(xpGain);
             return true;
-        }
-
-        static int IndexInChapter(Task t)
-        {
-            foreach (var ch in GameData.Chapters)
-                for (int i = 0; i < ch.tasks.Length; i++)
-                    if (ch.tasks[i] == t) return i;
-            return 0;
         }
 
         public Task ActiveMission(out TaskRec progress)
@@ -684,11 +826,13 @@ namespace LQFarm
             createdAt = GS.Now;
             islands.Clear(); islands.Add(new Island(0, true));
             seeds.Clear(); store.Clear(); missions.Clear(); daily.Clear();
-            collected.Clear(); claimedSets.Clear(); claimedMs.Clear(); shopBought.Clear(); visited.Clear();
-            chests = new int[4]; stats = new Stats(); stealLeft = 20; buffMutateUntil = 0;
+            collected.Clear(); claimedSets.Clear(); claimedMs.Clear(); shopBought.Clear(); visited.Clear(); equipped.Clear();
+            chests = new int[4]; stats = new Stats(); stealLeft = 20; buffMutateUntil = 0; buffXpUntil = 0;
             forecastUntil = 0; greenhouse = 0;
             contracts.Clear(); streak = 0; sinceDiamond = 0; contractsToday = 0;
             sinceLegendary = 0;
+            tutorial = "Welcome"; tipsSeen.Clear(); redeemedCodes.Clear();
+            pets.Clear(); petActive = ""; petEggs = 0; petPity = 0; petSnacks = 0; petFreeEggs = 0;
             SeedStarter();
             SyncPlots();
         }

@@ -18,10 +18,10 @@ namespace LQFarm
 
         RectTransform _root, _world, _overlayLayer, _popupLayer, _toastLayer;
 
-        /// <summary>Sky, hills, sea and clouds. Shifted against the camera so the world reads as
-        /// something the player moves through rather than islands sliding over a painted
-        /// backdrop — see <see cref="Parallax"/>.</summary>
+        /// <summary>The sky layer (SkyView's canvas). The arrival cinematic lifts it a little as the
+        /// camera comes down onto the home island.</summary>
         RectTransform _bgLayer;
+        public RectTransform BackgroundLayer => _bgLayer;
         Canvas _canvas;
         ArchipelagoView _farm;
         /// <summary>The HUD needs to count what is ready, waterable and plantable every frame it
@@ -71,13 +71,130 @@ namespace LQFarm
             Screen.autorotateToLandscapeRight = true;
             Screen.orientation = ScreenOrientation.AutoRotation;
 
-            GS.Load();
             BuildCanvas();
+
+            // The start screen signs in and settles which save to play (this device's or the
+            // account's) BEFORE the farm loads, so a save pulled from the account is simply the file
+            // the game then opens — no rebuild of a running farm.
+            Supa.RestoreSession();
+            bool skip = s_skipStart;
+            s_skipStart = false;
+            if (s_auditStart)
+            {
+                // the screenshot pass: the start screen, idle — no sign-in, no network
+                s_auditStart = false;
+                _start = StartScreen.ShowIdle(Layer("start", 30, true), this);
+                _start.PreviewForAudit("home");
+            }
+            else if (!skip && StartScreen.Wanted)
+                _start = StartScreen.Show(Layer("start", 30, true), this);
+            else
+                BuildGame();
+        }
+
+        StartScreen _start;
+        static bool s_skipStart, s_auditStart;
+
+        /// <summary>The start screen while it is up (the screenshot pass drives it).</summary>
+        public StartScreen StartForAudit => _start;
+
+        /// <summary>The flight from the start screen into the farm, while it plays.</summary>
+        EnterCinematic _cinematic;
+        public bool InCinematic => _cinematic != null;
+        string _heldToast;
+        /// <summary>The walkthrough and tips wait a moment after the cinematic: a card landing on
+        /// the very frame the HUD settles reads as part of the film breaking.</summary>
+        float _tutorialAfter;
+
+        /// <summary>The farm exists (the start screen is gone).</summary>
+        public bool Built => _farm != null;
+
+        /// <summary>Signing out: the session is dropping on purpose, not expiring.</summary>
+        public bool LeavingForStart { get; private set; }
+
+        /// <summary>For the Editor's screenshot and dev tools, which drive a farm that has to exist:
+        /// dismiss the start screen and play this device's save, offline.</summary>
+        public void EnsureBuilt()
+        {
+            // instant, always: a tool that needs the farm does not wait for a film to end
+            if (_cinematic != null) _cinematic.Skip();
+            if (Built) return;
+            if (_start != null) { _start.Dispose(); _start = null; }
+            BuildGame();
+        }
+
+        /// <summary>Called by the start screen once sign-in and the save question are settled.</summary>
+        public void EnterFromStart()
+        {
+            if (Built || _cinematic != null) return;
+            var start = _start;
+            _start = null;
+            if (start == null) { BuildGame(); return; }
+            // The farm is built only once the cinematic's veil covers the screen, so the second or
+            // two a phone spends in BuildGame is a still frame of cloud, never a half-built farm.
+            _cinematic = EnterCinematic.Play(this, Layer("cinematic", 31, true), start, () => { if (!Built) BuildGame(); });
+        }
+
+        /// <summary>The cinematic has handed the screen over: the walkthrough may speak now, and a
+        /// toast that arrived during it (a sync notice) is shown.</summary>
+        public void OnCinematicEnded(EnterCinematic c)
+        {
+            if (_cinematic != c) return;
+            _cinematic = null;
+            _tutorialAfter = Time.unscaledTime + 0.7f;
+            if (_heldToast != null) { var m = _heldToast; _heldToast = null; Toast(m); }
+        }
+
+        /// <summary>Tear the game down and boot it again: after signing out (back to the start
+        /// screen) or after the account's save replaced this device's (straight into the farm).</summary>
+        public static void Restart(bool showStart)
+        {
+            var old = I;
+            if (old != null)
+            {
+                old.LeavingForStart = showStart;
+                if (old._farm != null && GS.Local.loaded) GS.Save();
+                GS.Local.loaded = false;          // nothing left running may write the file now
+                I = null;
+                Destroy(old.gameObject);
+            }
+            s_skipStart = !showStart;
+            Supa.Run(RebootNextFrame());
+        }
+
+        /// <summary>The screenshot pass for the arrival cinematic: tear the farm down (saved first,
+        /// as any restart) and come back on an idle start screen that does not sign in.</summary>
+        public static void RebootToStartForAudit()
+        {
+            Restart(true);
+            s_auditStart = true;
+        }
+
+        static IEnumerator RebootNextFrame()
+        {
+            yield return null;                    // let Destroy finish: one EventSystem, one canvas
+            GS.Viewing = null;
+            GS.Local = new PlayerState();
+            CloudSync.Verified = CloudSync.Verified && Supa.SignedIn;
+            new GameObject("LQFarm").AddComponent<GameApp>();
+        }
+
+        void OnDestroy() { if (I == this) I = null; }
+
+        /// <summary>For the screenshot pass: the start screen over the running farm, idle (no
+        /// sign-in attempted). Dispose it afterwards.</summary>
+        public StartScreen OpenStartForAudit() { return StartScreen.ShowIdle(Layer("start_audit", 30, true), this); }
+
+        void BuildGame()
+        {
+            GS.Load();
 
             // Each layer is its own nested Canvas. With everything on one canvas, a single
             // moving cloud or bobbing badge forced a rebuild of every graphic in the game
             // once per frame — that was the lag.
-            BuildBackground(Layer("background", 1, false));
+            _sky = gameObject.AddComponent<SkyView>();
+            _bgLayer = Layer("background", 1, false);
+            _sky.Build(_bgLayer);
 
             _world = Layer("world", 2, true);
 
@@ -89,7 +206,8 @@ namespace LQFarm
             // Weather falls across the islands but never across a button: its own layer, above
             // the world and below the HUD, and not interactive.
             _weather = gameObject.AddComponent<WeatherFx>();
-            _weather.Init(_scene, Layer("weather", 3, false), _farm);
+            _weather.Init(Layer("weather", 3, false), _farm);
+            _sky.Bind(_weather, _farm);
 
             _hud = new Hud();
             _hud.Build(Layer("hud", 4, true, true), this);
@@ -97,7 +215,16 @@ namespace LQFarm
 
             _popupLayer = Layer("popups", 5, true, true);
             _overlayLayer = Layer("overlay", 6, true, true);
-            _toastLayer = Layer("toasts", 7, false, true);
+            // The coach dims EVERYTHING it is not pointing at, panels included (the Bán sỉ button
+            // lives in one), so it sits above them. Not safe-area inset: the dark must reach the
+            // screen edge; the card keeps itself inside the safe area.
+            _coach = new CoachView();
+            _coach.Build(Layer("coach", 7, true));
+            _toastLayer = Layer("toasts", 8, false, true);
+            // taps and swipe trails, over everything and never in the way of a tap
+            var touchLayer = Layer("touchfx", 9, false);
+            FxKit.Ensure(gameObject);
+            gameObject.AddComponent<TouchFx>().layer = touchLayer;
 
             _farm.RenderAll();
             _hud.Render(true);
@@ -115,47 +242,25 @@ namespace LQFarm
             watcher.onResize = FitFarm;
             FitFarm();
 
-            if (GS.Local.stats.plant == 0 && GS.Local.stats.harvest == 0)
-                StartCoroutine(FirstHint());
+            _tutorial = new Tutorial(this, _coach);
+            Pets = PetDirector.Attach(this);
+            CloudSync.Attach(this);
         }
 
-        RectTransform _pxFar, _pxNear, _pxClouds;
-        WeatherFx.Scene _scene;
+        CoachView _coach;
+        Tutorial _tutorial;
+        public Tutorial Tutorial => _tutorial;
+
+        // ---- what the tutorial reads ----
+        public PanelBase Panel => _panel;
+        public bool RewardOpen => _reward != null;
+        public bool SeedSheetOpen => _sheet != null && _sheet.IsOpen;
+        public SeedSheet Sheet => _sheet;
+
+        SkyView _sky;
+        public SkyView SkyView => _sky;
         WeatherFx _weather;
         public WeatherFx WeatherView => _weather;
-        Weather _shownWeather = (Weather)255;
-        float _pxFarBase, _pxNearBase;
-
-        /// <summary>Slide the distant layers against the camera, so the world reads as somewhere
-        /// the player moves through rather than islands sliding over a painted picture.
-        ///
-        /// Only the hills and the clouds move. The sky is a flat gradient with no features, so
-        /// moving it would achieve nothing, and the SEA must not move at all — its horizon is the
-        /// waterline every island is drawn to sit in, and the moment that drifts the islands stop
-        /// looking like they are floating in it.
-        ///
-        /// Both offsets are clamped to the margin each layer was built with. An unclamped
-        /// parallax over a 6500-unit archipelago would drag a hill's own edge into frame, which
-        /// looks far worse than no parallax at all.</summary>
-        void LateUpdate()
-        {
-            if (_farm == null || _farm.Camera == null) return;
-            float camX = _farm.Camera.Camera.x;
-
-            if (_pxFar != null)  Shift(_pxFar, ref _pxFarBase, -camX * 0.030f, 210f);
-            if (_pxNear != null) Shift(_pxNear, ref _pxNearBase, -camX * 0.055f, 130f);
-            if (_pxClouds != null) _pxClouds.anchoredPosition = new Vector2(Mathf.Clamp(-camX * 0.085f, -170f, 170f), 0f);
-        }
-
-        static void Shift(RectTransform rt, ref float applied, float want, float limit)
-        {
-            float next = Mathf.Clamp(want, -limit, limit);
-            float delta = next - applied;
-            if (Mathf.Abs(delta) < 0.01f) return;
-            rt.offsetMin += new Vector2(delta, 0f);
-            rt.offsetMax += new Vector2(delta, 0f);
-            applied = next;
-        }
 
         /// <summary>Re-fit the world to the current canvas.
         ///
@@ -165,12 +270,6 @@ namespace LQFarm
         void FitFarm()
         {
             if (_farm != null) _farm.Refit();
-        }
-
-        IEnumerator FirstHint()
-        {
-            yield return new WaitForSecondsRealtime(0.9f);
-            Toast("Chạm vào ô đất để gieo hạt giống!");
         }
 
         // ============================================================
@@ -194,7 +293,7 @@ namespace LQFarm
             _root = UIKit.Node("ui", go.transform);
             _root.Stretch();
 
-            if (FindObjectOfType<EventSystem>() == null)
+            if (FindAnyObjectByType<EventSystem>() == null)
             {
                 var es = new GameObject("EventSystem", typeof(EventSystem));
                 es.transform.SetParent(transform, false);
@@ -222,136 +321,12 @@ namespace LQFarm
             return rt;
         }
 
-        /// <summary>Horizon line, measured up from the bottom edge.</summary>
-        const float Horizon = 430f;
-
-        /// <summary>Layered sky, a hazy range of hills, drifting clouds, the sea the island
-        /// sits in, and a vignette to settle the eye on the farm.</summary>
-        void BuildBackground(RectTransform bg)
-        {
-            // ---- sky ----
-            _scene.clouds = new List<Image>();
-            _scene.swell = new List<Image>();
-            var sky = UIKit.Img(bg, Theme.Sky(), Color.white, "sky");
-            _scene.sky = sky;
-            sky.type = Image.Type.Sliced;
-            sky.rectTransform.Stretch();
-
-            // ---- sun ----
-            var glow = UIKit.Img(bg, Theme.Glow(), new Color(1f, 0.95f, 0.72f, 0.60f), "sunGlow");
-            glow.rectTransform.Anchor(UIKit.TopRight, new Vector2(-190, -70), new Vector2(520, 520));
-            var sun = UIKit.Img(bg, Art.Load("Art/bg/sun"), new Color(1f, 0.97f, 0.80f, 0.95f), "sun");
-            sun.preserveAspect = true;
-            sun.rectTransform.Anchor(UIKit.TopRight, new Vector2(-190, -70), new Vector2(120, 120));
-            _scene.sun = sun; _scene.sunGlow = glow;
-
-            // ---- distant hills ----
-            // The source art is a solid block whose top third carries the wavy crest, so the
-            // body has to sit BELOW the waterline (the sea is drawn after and hides it) with
-            // only the crest breaking the horizon. Tint multiplies, so a pale tint on pale
-            // art stays invisible — these have to be genuinely dark to register.
-            var farHills = UIKit.Img(bg, Art.Load("Art/bg/hills_large"), Theme.Hex("#7FB4D6"), "hillsFar");
-            farHills.rectTransform.anchorMin = new Vector2(0, 0);
-            farHills.rectTransform.anchorMax = new Vector2(1, 0);
-            farHills.rectTransform.pivot = new Vector2(0.5f, 0);
-            // the horizontal margin is travel for the parallax; without it a shifted hill
-            // would pull its own edge into frame
-            farHills.rectTransform.offsetMin = new Vector2(-240, Horizon - 200);
-            farHills.rectTransform.offsetMax = new Vector2(240, Horizon + 58);
-
-            var nearHills = UIKit.Img(bg, Art.Load("Art/bg/hills"), Theme.Hex("#5E97BE"), "hillsNear");
-            nearHills.rectTransform.anchorMin = new Vector2(0, 0);
-            nearHills.rectTransform.anchorMax = new Vector2(1, 0);
-            nearHills.rectTransform.pivot = new Vector2(0.5f, 0);
-            nearHills.rectTransform.offsetMin = new Vector2(-160, Horizon - 200);
-            nearHills.rectTransform.offsetMax = new Vector2(160, Horizon + 30);
-            _scene.farHills = farHills; _scene.nearHills = nearHills;
-
-            // ---- clouds, three depths drifting at their own pace ----
-            var clouds = UIKit.Node("clouds", bg);
-            clouds.Stretch();
-            _pxFar = farHills.rectTransform; _pxNear = nearHills.rectTransform; _pxClouds = clouds;
-            var specs = new (int sprite, float y, float w, float alpha, float speed)[]
-            {
-                // kept below the HUD band — clouds were drifting across the player card
-                (1, -168f, 240f, 0.95f, 26f), (4, -244f, 300f, 0.80f, 18f),
-                (2, -196f, 190f, 0.70f, 34f), (6, -300f, 250f, 0.55f, 13f),
-                (3, -150f, 170f, 0.85f, 22f), (5, -272f, 210f, 0.45f, 16f),
-            };
-            for (int i = 0; i < specs.Length; i++)
-            {
-                var c = specs[i];
-                var im = UIKit.Img(clouds, Art.Load("Art/bg/cloud" + c.sprite), new Color(1, 1, 1, c.alpha), "cloud");
-                im.preserveAspect = true;
-                float h = c.w * 0.62f;
-                im.rectTransform.Anchor(UIKit.TopLeft, new Vector2(0, c.y), new Vector2(c.w, h));
-                _scene.clouds.Add(im);
-                var d = im.gameObject.AddComponent<Drifter>();
-                d.speed = c.speed;
-                d.startX = -c.w - i * 190f;
-            }
-
-            // ---- sea ----
-            var water = UIKit.Img(bg, Theme.Sea(), Color.white, "water");
-            water.type = Image.Type.Sliced;
-            water.rectTransform.anchorMin = new Vector2(0, 0);
-            water.rectTransform.anchorMax = new Vector2(1, 0);
-            water.rectTransform.pivot = new Vector2(0.5f, 0);
-            water.rectTransform.offsetMin = new Vector2(-40, -60);
-            water.rectTransform.offsetMax = new Vector2(40, Horizon);
-            _scene.water = water;
-
-            // ---- swell ----
-            float[] bands = { 0.30f, 0.62f, 0.86f };
-            for (int i = 0; i < bands.Length; i++)
-            {
-                var band = UIKit.Round(bg, new Color(1, 1, 1, 0.10f - i * 0.02f), 6, "swell");
-                float y = Horizon * (1f - bands[i]);
-                band.rectTransform.anchorMin = new Vector2(0, 0);
-                band.rectTransform.anchorMax = new Vector2(1, 0);
-                band.rectTransform.pivot = new Vector2(0.5f, 0);
-                band.rectTransform.offsetMin = new Vector2(40 + i * 60, y);
-                band.rectTransform.offsetMax = new Vector2(-40 - i * 40, y + 5 + i * 2);
-            }
-
-            BuildPetals(bg);
-
-            // ---- vignette, last so it sits over the whole scene ----
-            var vig = UIKit.Img(bg, Theme.Vignette(), Color.white, "vignette");
-            vig.rectTransform.Stretch(-80, -80, -80, -80);
-            _scene.vignette = vig;
-        }
-
-        /// <summary>Petals drifting across the scene. Cheap, and the farm feels alive.</summary>
-        void BuildPetals(RectTransform parent)
-        {
-            var layer = UIKit.Node("petals", parent);
-            layer.Stretch();
-            _scene.petals = layer;
-            var tints = new[]
-            {
-                new Color(1f, 0.92f, 0.96f, 0.75f), new Color(1f, 0.98f, 0.84f, 0.70f),
-                new Color(0.93f, 1f, 0.90f, 0.65f),
-            };
-            for (int i = 0; i < 14; i++)
-            {
-                float size = UnityEngine.Random.Range(7f, 14f);
-                var im = UIKit.Img(layer, Theme.Circle(), tints[i % tints.Length], "petal");
-                im.rectTransform.Anchor(UIKit.TopLeft, Vector2.zero, new Vector2(size, size * 0.66f));
-                var f = im.gameObject.AddComponent<Faller>();
-                f.speed = UnityEngine.Random.Range(14f, 34f);
-                f.swing = UnityEngine.Random.Range(18f, 48f);
-                f.phase = UnityEngine.Random.value * 6.28f;
-                f.startX = UnityEngine.Random.value;
-                f.startY = UnityEngine.Random.value;
-            }
-        }
-
         // ============================================================
         // main loop
         // ============================================================
         void Update()
         {
+            if (_farm == null) return;            // still on the start screen
             float now = Time.unscaledTime;
 
             // Badges and plants are animated by FieldAnimator; the loop here only has to advance
@@ -374,17 +349,35 @@ namespace LQFarm
                     if (PlotLogic.State(_farm.Plots[i]) == PlotState.Ready) finished = true;
                 }
                 if (finished) _tickingDirty = true;
+                // rain and storm water whatever window just opened, on every island
+                RainTick();
+                // whatever ripened or turned thirsty outside the ticking list (see RefreshStale)
+                _farm.RefreshStale();
+                RefreshPlotPop();
+                if (_panel is PetPanel petPanel) petPanel.TickTimer();
 
                 _hud.Render();
             }
 
             if (now >= _nextSave) { _nextSave = now + 5f; GS.Save(); }
 
-            if (EscapePressed())
-            {
-                if (_panel != null) CloseAll();
-                else ClosePlotPopup();
-            }
+            // not over the cinematic: a Welcome card landing mid-flight would break the shot
+            if (_cinematic == null && now >= _tutorialAfter) _tutorial?.Tick(Time.unscaledDeltaTime);
+
+            if (EscapePressed()) Back();
+        }
+
+        /// <summary>Escape / Android Back: close the topmost thing, one per press — the reward card,
+        /// then the panel under it, the seed sheet, the menu, the plot popup. A tutorial step that
+        /// has dimmed the screen swallows it: Back must not dismiss a panel the step points into.</summary>
+        void Back()
+        {
+            if (_reward != null) { CloseReward(); return; }
+            if (_tutorial != null && _tutorial.Blocking) return;
+            if (_panel != null) { CloseAll(); return; }
+            if (SeedSheetOpen) { CloseSeedSheet(); return; }
+            if (_hud != null && _hud.MenuOpen) { _hud.CloseMenu(); return; }
+            ClosePlotPopup();
         }
 
         /// <summary>Escape / Android back, under whichever input backend the project uses.</summary>
@@ -424,7 +417,8 @@ namespace LQFarm
         // ============================================================
         public void Open(PanelBase panel)
         {
-            _hud?.HideTray();
+            Sfx.Play(SfxId.PanelOpen);
+            _hud?.CloseMenu();
             CloseSeedSheet();
             CloseAll();
             ClosePlotPopup();
@@ -432,7 +426,11 @@ namespace LQFarm
 
             _scrim = UIKit.Node("scrim", _overlayLayer);
             _scrim.Stretch();
-            var scrimIm = _scrim.gameObject.AddComponent<Image>();
+            // the dark reaches the screen edges; the card stays centred in the safe area
+            var bleed = UIKit.Node("bleed", _scrim);
+            bleed.Stretch();
+            FullBleed.On(bleed);
+            var scrimIm = bleed.gameObject.AddComponent<Image>();
             scrimIm.color = Theme.Scrim;
             var scrimBtn = _scrim.gameObject.AddComponent<Button>();
             scrimBtn.targetGraphic = scrimIm;
@@ -451,40 +449,40 @@ namespace LQFarm
             float fit = Mathf.Min(1f, Mathf.Min(room.x / panel.Size.x, room.y / panel.Size.y));
             if (fit < 1f) holder.localScale = Vector3.one * fit;
 
-            var shadow = UIKit.Img(holder, Theme.Shadow(28, 26), new Color(0, 0, 0, 0.38f), "shadow");
-            shadow.type = Image.Type.Sliced;
-            shadow.rectTransform.Stretch(-22, -16, -22, -28);
-
-            var bg = UIKit.Round(holder, Theme.Cream, 28, "card");
-            bg.rectTransform.Stretch();
+            // M3 paper card, M4 ribbon. The old header was a Kenney brown plate with corners of
+            // about 6 px, inset 12/8 inside a card rounded to 28 — a box inside a lozenge, which is
+            // most of what made every panel look boxy. The ribbon now runs full-bleed inside the
+            // card's 3 px edge and shares its corner (28 - 3 = 25), and only its top is rounded.
+            var bg = SurfaceLook.Add(holder, Looks.Paper, 28f).Fill;
             bg.raycastTarget = true;                 // taps inside the card must not close it
             _card = holder;
 
-            // header band
-            var head = UIKit.Img(holder, Theme.Skin.Header, Color.white, "head");
-            head.type = Image.Type.Sliced;
-            head.rectTransform.anchorMin = new Vector2(0, 1);
-            head.rectTransform.anchorMax = new Vector2(1, 1);
-            head.rectTransform.pivot = new Vector2(0.5f, 1);
-            head.rectTransform.offsetMin = new Vector2(12, -78);
-            head.rectTransform.offsetMax = new Vector2(-12, -8);
-            var title = UIKit.LabelOutlined(head.transform, panel.Title, 28, Color.white, TextAnchor.MiddleLeft);
-            title.rectTransform.Stretch(30, 0, 120, 0);
+            var head = UIKit.Node("head", holder);
+            head.anchorMin = new Vector2(0, 1);
+            head.anchorMax = new Vector2(1, 1);
+            head.pivot = new Vector2(0.5f, 1);
+            head.offsetMin = new Vector2(3, -75);
+            head.offsetMax = new Vector2(-3, -3);
+            SurfaceLook.Add(head, Looks.Ribbon, 25f, topOnly: true);
+            var title = UIKit.LabelOutlined(head, panel.Title, 30, Looks.Ribbon.ink, TextAnchor.MiddleLeft, Looks.Ribbon.inkLine);
+            title.rectTransform.Stretch(30, 0, 96, 4);
 
             if (!string.IsNullOrEmpty(panel.Subtitle))
             {
-                title.rectTransform.Anchor(UIKit.Left, new Vector2(30, 10), new Vector2(500, 30));
+                title.rectTransform.Anchor(UIKit.Left, new Vector2(30, 12), new Vector2(560, 38));
                 title.rectTransform.pivot = new Vector2(0, 0.5f);
-                var sub = UIKit.Label(head.transform, panel.Subtitle, 17, new Color(1, 1, 1, 0.8f), TextAnchor.MiddleLeft);
-                sub.rectTransform.Anchor(UIKit.Left, new Vector2(30, -14), new Vector2(500, 22));
+                var sub = UIKit.Label(head, panel.Subtitle, 17, Looks.Ribbon.ink.Alpha(0.82f), TextAnchor.MiddleLeft);
+                sub.rectTransform.Anchor(UIKit.Left, new Vector2(30, -17), new Vector2(560, 26));
                 sub.rectTransform.pivot = new Vector2(0, 0.5f);
             }
 
-            var close = UIKit.IconBtn(head.transform, null, Theme.Red, 0.5f, CloseAll);
-            close.GetComponent<RectTransform>().Anchor(UIKit.Right, new Vector2(-20, -2), new Vector2(52, 52));
+            // 56 px, pinned over the card's top-right corner so it reads as the card's own
+            // control rather than one more button on the header.
+            var close = UIKit.IconBtn(holder, null, Theme.Red, 0.5f, CloseAll);
+            close.GetComponent<RectTransform>().Anchor(UIKit.TopRight, new Vector2(14, 14), new Vector2(56, 56));
             var closeIcon = UIKit.Img(close.transform, Theme.Skin.IconCross, Color.white, "x");
             closeIcon.preserveAspect = true;
-            closeIcon.rectTransform.Stretch(16, 16, 16, 16);
+            closeIcon.rectTransform.Stretch(17, 17, 17, 17);
 
             // body
             panel.Card = holder;
@@ -499,6 +497,7 @@ namespace LQFarm
         {
             if (_scrim != null)
             {
+                Sfx.Play(SfxId.PanelClose);
                 var dying = _scrim.gameObject;
                 Tween.Fade(_modalGroup, 0f, 0.12f, () => { if (dying != null) Destroy(dying); });
                 _scrim = null;
@@ -509,6 +508,64 @@ namespace LQFarm
         }
 
         public void RefreshPanel() { _panel?.Refresh(); }
+
+        void RainTick()
+        {
+            var s = GS.Local;
+            if (s == null || _farm == null) return;
+            bool any = false;
+            for (int ii = 0; ii < s.islands.Count; ii++)
+            {
+                var isl = s.islands[ii];
+                if (!isl.unlocked) continue;
+                for (int i = 0; i < isl.plots.Count && i < GS.PlotCount; i++)
+                {
+                    var p = isl.plots[i];
+                    // cheap out: nothing to do unless a window is open right now
+                    if (!WaterSys.WindowOpen(p, out _)) continue;
+                    if (WaterSys.RainWater(s, p, catchUp: false) > 0) { any = true; _farm.ShowRainWater(ii, i); }
+                }
+            }
+            if (any) { MarkDirty(); _hud.Render(); }
+        }
+
+        // ============================================================
+        // pets
+        // ============================================================
+        public PetDirector Pets { get; private set; }
+
+        /// <summary>One job from a pet's patrol, through the same view calls a tap uses.</summary>
+        public bool PetWork(PetJob j)
+        {
+            if (_farm == null) return false;
+            bool ok;
+            if (j.water)
+            {
+                ok = _farm.WaterOn(j.island, j.plot);
+                if (ok) Sfx.Play(SfxId.Water, 0.55f);
+            }
+            else
+            {
+                ok = _farm.HarvestOn(j.island, j.plot, out var res);
+                if (ok)
+                {
+                    Sfx.Play(SfxId.Harvest, 0.65f);
+                    ShowMutation(res, modalAllowed: false);
+                }
+            }
+            if (ok) { MarkDirty(); _hud.Render(); }
+            return ok;
+        }
+
+        /// <summary>The pet took a snack. Said once, in a toast, with what it was.</summary>
+        public void PetAte(PetDef pet, Seed seed, int variant)
+        {
+            string what = seed != null ? seed.name + (variant > 0 ? " " + Art.Elem(variant).name : "") : "nông sản";
+            Toast(pet.name + " ăn vụng 1 " + what + "!");
+            _hud.Render(); RefreshPanel(); GS.Save();
+        }
+
+        public void OnPetsChanged() { _hud.Render(); }
 
         /// <summary>Build views for any island the player has gained. Called after an unlock.</summary>
         public void SyncIslands() { _farm?.Sync(); }
@@ -534,6 +591,8 @@ namespace LQFarm
             if (_plotPop != null) Destroy(_plotPop.gameObject);
             _plotPop = null;
             _popIndex = -1;
+            _popGrow = _popWater = null;
+            _popWaterBtn = _popRushBtn = null;
         }
 
         public void OpenPlot(int i)
@@ -543,6 +602,11 @@ namespace LQFarm
             PlotState st = PlotLogic.State(p);
 
             if (st == PlotState.Ready) { ClosePlotPopup(); DoHarvest(i); return; }
+
+            // A thirsty plot is watered by tapping it, the way a ripe one is harvested. The popup
+            // put the one obvious action behind a second tap on a window that can be 8 s long; it
+            // is still there on the next tap, for the timer and "Chín ngay".
+            if (st == PlotState.Thirsty) { CloseSeedSheet(); DoWater(i); return; }
 
             // An empty bed opens (or re-targets) the seed sheet instead of a popup.
             if (st == PlotState.Empty) { OpenSeedSheet(i); return; }
@@ -556,15 +620,11 @@ namespace LQFarm
             var pop = UIKit.Node("plotPop", _popupLayer);
             _plotPop = pop;
 
-            float w = 340f;
-            float h = 172f;
+            float w = st == PlotState.Locked ? 340f : 420f;
+            float h = st == PlotState.Locked ? 172f : 214f;
             pop.sizeDelta = new Vector2(w, h);
 
-            var shadow = UIKit.Img(pop, Theme.Shadow(20, 20), new Color(0, 0, 0, 0.32f), "shadow");
-            shadow.type = Image.Type.Sliced;
-            shadow.rectTransform.Stretch(-14, -10, -14, -18);
-            var bg = UIKit.Round(pop, Theme.Cream, 22, "bg");
-            bg.rectTransform.Stretch();
+            var bg = SurfaceLook.Add(pop, Looks.Paper, 24f).Fill;
             bg.raycastTarget = true;
 
             if (st == PlotState.Locked) BuildLockedPop(pop, i);
@@ -641,59 +701,127 @@ namespace LQFarm
             }
         }
 
+        // live readouts of the growing-plot popup, refreshed by the one-second tick
+        Image _popGrow, _popWater;
+        Text _popGrowText, _popWaterText;
+        RectTransform _popWaterRow;
+        SkinButton _popWaterBtn, _popRushBtn;
+
+        /// <summary>A growing plot: two bars with one short caption each, and two buttons.
+        ///
+        /// It used to be one subtitle line, "Còn 12m 40s · Băng Giá · 3 quả · lượt tưới sau 4m 10s ·
+        /// còn 2 lượt", which ran out of a 340 px card on any long crop. Each fact now has its own
+        /// row with a fixed column for the caption, and the rows update while the card is open.</summary>
         void BuildGrowingPop(RectTransform pop, int i, Plot p)
         {
             var seed = GameData.Get(p.crop);
             var el = Art.Elem(p.variant);
-            // The tier was rolled at plant and the plot has been glowing since stage one, so the
-            // popup confirms rather than reveals. It also promises the fruit count, which is the
-            // part the glow cannot say.
-            string name = seed.name + (p.variant > 0 ? "  \u2022 " + el.name : "");
             int fruits = GS.Viewing.YieldOf(seed, p.variant);
-            // The subtitle is where the watering rhythm is taught. A player who never opens this
-            // popup can still learn it from the pulsing ring, but the numbers only live here.
-            bool open = WaterSys.WindowOpen(p, out _);
-            int left = WaterSys.Remaining(p);
-            string hint;
-            if (open)          hint = "tưới được ngay, giảm " + WaterSys.CutPercent(p) + "%";
-            else if (left > 0) hint = "lượt tưới sau " + Fmt.Time(Mathf.CeilToInt(WaterSys.NextWindowIn(p)))
-                                      + " · còn " + left + " lượt";
-            else               hint = "hết lượt tưới";
+            // how many times it drinks is part of what the crop IS, so it sits with the fruit count
+            string drinks = " · tưới " + WaterSys.Windows(p) + " lần";
+            string sub = p.variant > 0 ? el.Grade + " " + el.name + " · " + fruits + " quả" + drinks : fruits + " quả mỗi lần thu" + drinks;
+            PopTitle(pop, seed.name, sub);
 
-            string yieldNote = fruits + " quả";
-            if (p.variant > 0) yieldNote = el.Grade + " · " + yieldNote;
-            PopTitle(pop, name, "Còn " + Fmt.Time(PlotLogic.Remain(p)) + "  ·  " + yieldNote + "  ·  " + hint);
+            const float left = 22f, iconW = 30f, textW = 146f;
+            float barW = pop.sizeDelta.x - left * 2f - iconW - 8f - textW;
 
-            var water = UIKit.Btn(pop, open ? "Tưới nước" : "Chưa tới cữ",
-                                  open ? Theme.Blue : Theme.Cream3,
-                                  open ? Theme.BlueDeep : Theme.Hex("#B9A98C"), 21, 20,
-                                  () => DoWater(i));
-            water.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(-82, 18), new Vector2(150, 52));
-            if (!open)
+            RectTransform Row(float y, Sprite icon, Color iconTint, Color fill, out Image bar, out Text caption)
             {
-                UIKit.BtnLabel(water).color = Theme.InkSoft;
-                water.interactable = false;
+                var row = UIKit.Node("row", pop);
+                row.anchorMin = new Vector2(0, 1); row.anchorMax = new Vector2(1, 1);
+                row.pivot = new Vector2(0.5f, 1f);
+                row.offsetMin = new Vector2(left, y - 26f); row.offsetMax = new Vector2(-left, y);
+                var ic = UIKit.Img(row, icon, iconTint, "ic");
+                ic.preserveAspect = true;
+                ic.rectTransform.Anchor(UIKit.Left, Vector2.zero, new Vector2(iconW - 4f, iconW - 4f));
+                bar = UIKit.Bar(row, Theme.Hex("#E3D3B3"), fill);
+                ((RectTransform)bar.transform.parent).Anchor(UIKit.Left, new Vector2(iconW + 4f, 0), new Vector2(barW, 14));
+                caption = UIKit.Label(row, "", 17, Theme.InkSoft, TextAnchor.MiddleRight);
+                caption.rectTransform.Anchor(UIKit.Right, Vector2.zero, new Vector2(textW, 26));
+                return row;
             }
 
-            var speed = UIKit.Btn(pop, "Chín ngay · 800", Theme.Amber, Theme.AmberDeep, 19, 20,
-                                  () => SpeedUp(i));
-            speed.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(82, 18), new Vector2(150, 52));
+            Row(-80f, Art.Icon(seed.art, p.variant), Color.white, Theme.Green, out _popGrow, out _popGrowText);
+            _popWaterRow = Row(-114f, Theme.Skin.Droplet, Theme.Blue, Theme.Hex("#5FB8F0"), out _popWater, out _popWaterText);
+
+            var water = UIKit.Btn(pop, "Tưới nước", Theme.Blue, Theme.BlueDeep, 21, 20, () => DoWater(i));
+            water.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(-92, 16), new Vector2(170, 52));
+            _popWaterBtn = water.GetComponent<SkinButton>();
+
+            var rush = UIKit.Btn(pop, "Chín ngay", Theme.Amber, Theme.AmberDeep, 20, 20, () => SpeedUp(i));
+            rush.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(92, 16), new Vector2(170, 52));
+            _popRushBtn = rush.GetComponent<SkinButton>();
+
+            RefreshPlotPop();
+        }
+
+        /// <summary>Re-read the open popup's plot. Closes it once there is nothing left to show.</summary>
+        void RefreshPlotPop()
+        {
+            if (_plotPop == null || _popIndex < 0 || _popGrow == null) return;
+            var p = _popIndex < _farm.Plots.Count ? _farm.Plots[_popIndex] : null;
+            var st = PlotLogic.State(p);
+            if (st != PlotState.Growing && st != PlotState.Thirsty) { ClosePlotPopup(); return; }
+
+            _popGrow.fillAmount = Mathf.Clamp01(PlotLogic.Elapsed(p) / Mathf.Max(0.001f, p.dur));
+            _popGrowText.text = "chín sau " + Fmt.Time(PlotLogic.Remain(p));
+
+            bool open = st == PlotState.Thirsty;
+            int windows = WaterSys.Remaining(p);
+            if (open)
+            {
+                _popWater.fillAmount = 1f;
+                // the time this watering takes off, never a percentage: "tưới: sớm 16p"
+                int sec = Mathf.RoundToInt(WaterSys.CutNow(p));
+                _popWaterText.text = sec > 0 ? "tưới: sớm " + Fmt.Time(sec) : "tưới ngay";
+                _popWaterText.color = Theme.BlueDeep;
+            }
+            else if (windows > 0)
+            {
+                float period = WaterSys.Period(p.dur, WaterSys.Windows(p));
+                _popWater.fillAmount = Mathf.Clamp01(1f - WaterSys.NextWindowIn(p) / Mathf.Max(0.001f, period));
+                _popWaterText.text = "tưới sau " + Fmt.Time(Mathf.CeilToInt(WaterSys.NextWindowIn(p)));
+                _popWaterText.color = Theme.InkSoft;
+            }
+            else
+            {
+                _popWater.fillAmount = 0f;
+                _popWaterText.text = "đã hết lượt tưới";
+                _popWaterText.color = Theme.InkSoft;
+            }
+
+            if (_popWaterBtn != null)
+            {
+                var b = _popWaterBtn.GetComponent<Button>();
+                if (b.interactable != open)
+                {
+                    b.interactable = open;
+                    UIKit.Restyle(b, open ? Theme.Blue : Theme.Cream3, open ? (Color?)null : Theme.InkSoft);
+                }
+                UIKit.BtnLabel(b).text = open ? "Tưới nước" : windows > 0 ? "Chưa tới cữ" : "Đã hết cữ";
+            }
+            if (_popRushBtn != null)
+            {
+                int price = ShopSys.RushPrice(GS.Local, p);
+                UIKit.BtnLabel(_popRushBtn.GetComponent<Button>()).text = "Chín ngay · " + Fmt.Short(price);
+            }
         }
 
         void DoWater(int i)
         {
-            if (_farm.Water(i)) { _hud.Render(); GS.Save(); }
+            if (_farm.Water(i)) { Sfx.Play(SfxId.Water); MarkDirty(); _hud.Render(); GS.Save(); }
             ClosePlotPopup();
         }
 
         void SpeedUp(int i)
         {
-            if (GS.Local.coin < 800) { Toast("Không đủ xu nông trại"); return; }
-            GS.Local.AddCoin(-800);
+            var p = _farm.Plots[i];
+            int price = ShopSys.RushPrice(GS.Local, p);
+            if (GS.Local.coin < price) { Toast("Không đủ xu nông trại"); return; }
+            GS.Local.AddCoin(-price);
             _farm.InstantGrow(i);
             MarkDirty(); _hud.Render(); GS.Save();
             ClosePlotPopup();
-            Toast("Cây đã chín ngay lập tức!");
         }
 
         void BuyPlot(int i)
@@ -707,6 +835,7 @@ namespace LQFarm
             if (!GS.Local.BuyPlot(island, i)) { ClosePlotPopup(); return; }
 
             _farm.RenderAll(); MarkDirty(); _hud.Render(); GS.Save();
+            Sfx.Play(SfxId.Coins);
             Toast("Đã mở ô đất · " + Fmt.N(price) + " xu");
             ClosePlotPopup();
         }
@@ -720,6 +849,8 @@ namespace LQFarm
         void DoHarvest(int i)
         {
             if (!_farm.Harvest(i, out var res)) return;
+            Sfx.Play(SfxId.Harvest);
+            if (res.bonusCoins > 0) Sfx.Play(SfxId.Coins, 0.6f);
             MarkDirty(); _hud.Render(); GS.Save();
             ShowMutation(res, modalAllowed: true);
         }
@@ -733,8 +864,9 @@ namespace LQFarm
             switch (res.variant)
             {
                 case 1:  break;                                        // Ngọc Bích: the glow says it
-                case 2:  Toast(el.name + "! " + res.seed.name); break;
+                case 2:  Sfx.Play(SfxId.Mutation); break;             // the ring says it
                 case 3:
+                    Sfx.Play(SfxId.Mutation);
                     Toast(el.Grade + " · " + el.name + "! " + res.seed.name);
                     Tween.Shake(_root, 5f);
                     break;
@@ -747,7 +879,7 @@ namespace LQFarm
                                            res.seed.name + " " + el.name, el.glow),
                             new RewardItem(CoinIconSprite, "×" + Fmt.N(Mathf.RoundToInt(el.sell)) + " giá trị", Theme.Amber),
                             new RewardItem(Theme.Skin.NavSeeds, res.fruits + " quả", Theme.GreenDeep),
-                        });
+                        }, SfxId.Legendary);
                     else Toast(el.Grade + " · " + el.name + "! " + res.seed.name);
                     break;
             }
@@ -763,37 +895,163 @@ namespace LQFarm
         /// summary lands, and only then does it get its moment.</summary>
         public void HarvestAll()
         {
-            int n = 0, fruits = 0, coins = 0, mutations = 0;
+            int n = 0, fruits = 0, coins = 0, xp = 0, mutations = 0;
             var best = default(IslandView.HarvestResult);
+            // why: the weather most of the bonus came from, and the best tag multiplier
+            var weatherBonus = new Dictionary<Weather, int>();
+            float bestTag = 1f;
+            Sprite firstIcon = null;
 
+            int k = 0;
             foreach (int i in _farm.ReadyPlots())
             {
-                if (!_farm.Harvest(i, out var res)) continue;
+                if (!_farm.Harvest(i, out var res, k)) continue;
+                k++;
                 n++;
                 fruits += res.fruits;
                 coins += res.bonusCoins;
+                xp += res.xp;
+                if (firstIcon == null) firstIcon = Art.Icon(res.seed.art, 0);
                 if (res.variant > 0) mutations++;
                 if (res.variant > best.variant) best = res;
+                IslandView.SplitSell(res.weather, res.sellMul, out float w, out float t);
+                if (Mathf.Abs(w - 1f) >= 0.02f)
+                {
+                    weatherBonus.TryGetValue(res.weather, out int cnt);
+                    weatherBonus[res.weather] = cnt + 1;
+                }
+                if (t > bestTag) bestTag = t;
             }
 
             if (n == 0) { Toast("Chưa có cây nào chín"); return; }
             MarkDirty(); _hud.Render(); GS.Save();
             Tween.Shake(_root, 4f);
+            StartCoroutine(SweepSounds(n, coins > 0));
 
-            // what · how much · why
-            string line = "Thu hoạch " + n + " cây · " + fruits + " quả";
-            if (coins > 0) line += "  +" + Fmt.N(coins);
-            // No emoji: legacy Text renders from the OS font and has no colour-glyph path, so
-            // on Android "✨" is a tofu box in the middle of the one line that celebrates luck.
-            if (mutations > 0) line += "  ·  " + mutations + " đột biến";
-            Toast(line);
+            Weather mainWeather = Weather.Sunny;
+            int most = 0;
+            foreach (var kv in weatherBonus) if (kv.Value > most) { most = kv.Value; mainWeather = kv.Key; }
+            StartCoroutine(HarvestSummary(n, fruits, coins, xp, firstIcon, most > 0 ? mainWeather : (Weather?)null,
+                                          bestTag, mutations, 0.2f + k * 0.04f));
 
-            if (best.variant == Art.Elements.Length - 1) StartCoroutine(QueuedMutation(best));
+            // the arcs land, the summary appears, and only then does a legendary get its modal
+            if (best.variant == Art.Elements.Length - 1) StartCoroutine(QueuedMutation(best, 0.2f + k * 0.04f + 1.2f));
         }
 
-        IEnumerator QueuedMutation(IslandView.HarvestResult res)
+        RectTransform _summary;
+
+        /// <summary>A pluck for each arc as it leaves, up to eight — the sweep's cascade, heard.</summary>
+        IEnumerator SweepSounds(int n, bool coins)
         {
-            yield return new WaitForSecondsRealtime(1.1f);
+            int plucks = Mathf.Min(n, 8);
+            for (int i = 0; i < plucks; i++)
+            {
+                Sfx.Play(SfxId.Harvest, 0.8f);
+                yield return new WaitForSecondsRealtime(Mathf.Max(0.04f, n * 0.04f / plucks));
+            }
+            if (coins) Sfx.Play(SfxId.Coins, 0.7f);
+        }
+
+        /// <summary>For the screenshot pass: the receipts, without harvesting anything (the audit
+        /// runs on the developer's own save).</summary>
+        public void PreviewHarvestReceipts(int plot)
+        {
+            _farm.PreviewHarvestFx(plot);
+            StartCoroutine(HarvestSummary(12, 43, 320, 268, Art.Icon("carrot", 0), Weather.Rain, 1.35f, 2, 0.1f));
+        }
+
+        /// <summary>The one receipt for a harvest-all: what, how much, and why.
+        ///
+        ///     Thu hoạch 16 cây
+        ///     [crop] +43 quả      [coin] +320      [star] +268 XP
+        ///     [weather] Mưa ×0,95   [star] bonus ×1,35   2 đột biến
+        ///
+        /// It slides up from the bottom once the arcs have landed, stays 3.2 s and never blocks a
+        /// tap. The third line is where the multiplier chain appears, already folded — folding is
+        /// the only honest way when sixteen plots are sixteen crops with different tags.</summary>
+        IEnumerator HarvestSummary(int n, int fruits, int coins, int xp, Sprite icon, Weather? weather,
+                                   float tag, int mutations, float wait)
+        {
+            yield return new WaitForSecondsRealtime(wait);
+            if (_summary != null) Destroy(_summary.gameObject);
+
+            bool why = weather.HasValue || tag >= 1.02f || mutations > 0;
+            float h = why ? 132f : 100f;
+            var card = UIKit.Node("harvestSummary", _toastLayer);
+            card.Anchor(UIKit.Bottom, new Vector2(0, 104), new Vector2(520, h));
+            _summary = card;
+            SurfaceLook.Add(card, Looks.Paper, 24f);
+            var group = card.gameObject.AddComponent<CanvasGroup>();
+            group.blocksRaycasts = false;
+            group.interactable = false;
+
+            var title = UIKit.Label(card, "Thu hoạch " + n + " cây", 21, Theme.Ink, TextAnchor.MiddleLeft, FontStyle.Bold);
+            title.rectTransform.Anchor(UIKit.TopLeft, new Vector2(24, -10), new Vector2(472, 32));
+
+            // how much: three amounts in fixed columns (left edges 24, 196, 356)
+            void Amount(float x, Sprite sp, Color tint, string text, Color ink)
+            {
+                var ic = UIKit.Img(card, sp, tint, "ic");
+                ic.preserveAspect = true;
+                ic.rectTransform.Anchor(UIKit.TopLeft, new Vector2(x, -44), new Vector2(34, 34));
+                UIKit.Label(card, text, 24, ink, TextAnchor.MiddleLeft, FontStyle.Bold)
+                     .rectTransform.Anchor(UIKit.TopLeft, new Vector2(x + 40, -42), new Vector2(120, 36));
+            }
+            Amount(24, icon, Color.white, "+" + Fmt.N(fruits) + " quả", Theme.GreenDeep);
+            if (coins > 0) Amount(196, Theme.Skin.Coin, Color.white, "+" + Fmt.N(coins), Theme.AmberDeep);
+            Amount(coins > 0 ? 356 : 196, Theme.Skin.StarGold, Color.white, "+" + Fmt.N(xp) + " XP", Theme.BlueDeep);
+
+            if (why)
+            {
+                float x = 24f;
+                void Chip(Sprite sp, Color tint, string text, Color bg)
+                {
+                    var chip = UIKit.Node("why", card);
+                    float w = 44f + text.Length * 9.2f;
+                    chip.Anchor(UIKit.TopLeft, new Vector2(x, -88), new Vector2(w, 30));
+                    var im = UIKit.Img(chip, null, bg.Alpha(0.16f), "bg");
+                    im.rectTransform.Stretch();
+                    Chrome.Shape(im, 15f);
+                    if (sp != null)
+                    {
+                        var ic = UIKit.Img(chip, sp, tint, "ic");
+                        ic.preserveAspect = true;
+                        ic.rectTransform.Anchor(UIKit.Left, new Vector2(8, 0), new Vector2(20, 20));
+                    }
+                    UIKit.Label(chip, text, 16, Color.Lerp(bg, Theme.Ink, 0.45f), TextAnchor.MiddleLeft, FontStyle.Bold)
+                         .rectTransform.Stretch(sp != null ? 32 : 12, 0, 8, 1);
+                    x += w + 8f;
+                }
+                if (weather.HasValue)
+                {
+                    var wd = WeatherSys.Def(weather.Value);
+                    Chip(Art.WeatherIcon(weather.Value), Theme.Hex(wd.hex), wd.name + " ×" + Fmt.Mul(wd.sell), Theme.Hex(wd.hex));
+                }
+                if (tag >= 1.02f) Chip(Theme.Skin.StarGold, Color.white, "bonus ×" + Fmt.Mul(tag), Theme.Amber);
+                if (mutations > 0) Chip(null, Color.white, mutations + " đột biến", Theme.Purple);
+            }
+
+            // slide up and fade in, hold, fade out
+            const float rise = 36f;
+            var home = card.anchoredPosition;
+            for (float e = 0f; e < 0.25f; e += Time.unscaledDeltaTime)
+            {
+                if (card == null) yield break;
+                float q = Tween.EaseOut(e / 0.25f);
+                card.anchoredPosition = home - new Vector2(0, rise * (1f - q));
+                group.alpha = q;
+                yield return null;
+            }
+            if (card == null) yield break;
+            card.anchoredPosition = home; group.alpha = 1f;
+            yield return new WaitForSecondsRealtime(3.2f);
+            if (card == null) yield break;
+            Tween.Fade(group, 0f, 0.3f, () => { if (card != null) Destroy(card.gameObject); });
+        }
+
+        IEnumerator QueuedMutation(IslandView.HarvestResult res, float wait = 1.1f)
+        {
+            yield return new WaitForSecondsRealtime(wait);
             ShowMutation(res, modalAllowed: true);
         }
 
@@ -807,15 +1065,19 @@ namespace LQFarm
         public void OpenSeedSheet(int plot)
         {
             ClosePlotPopup();
-            _hud.HideTray();
+            _hud.CloseMenu();
             if (_sheet == null) { _sheet = new SeedSheet(); _sheet.Build(_popupLayer, this); }
 
             _sheetPlot = plot;
             string isle = IslandSys.NameOf(_farm.CurrentIsland);
             int empty = _farm.EmptyPlots().Count;
+            // a big plot takes trees, a small one everything else; "gieo nhanh" follows the island
+            bool big = plot >= 0 ? _farm.Plots[plot].big : IslandSys.Def(_farm.CurrentIsland).layout == IslandLayout.Giant;
+            _sheet.Big = big;
             if (plot >= 0)
             {
-                _sheet.Show("Chọn hạt giống", "Gieo vào ô đang sáng · " + isle + " · còn " + empty + " ô trống");
+                _sheet.Show(big ? "Chọn cây lớn" : "Chọn hạt giống",
+                            (big ? "Ô đất lớn chỉ trồng cây lớn · " : "Gieo vào ô đang sáng · ") + isle + " · còn " + empty + " ô trống");
                 _farm.SetSelectedPlot(plot);
                 _farm.Camera.SetInsetBottom(SeedSheet.Height, _farm.ContentOfPlot(plot));
             }
@@ -826,6 +1088,9 @@ namespace LQFarm
                 _farm.Camera.SetInsetBottom(SeedSheet.Height);
             }
             _hud.SetActionBarVisible(false);
+            // The sheet covers the bottom of the rail; a half-cut "$" disc under its edge looked
+            // like a rendering fault. The rail comes back with the sheet's slide-out.
+            _hud.SetRailVisible(false);
         }
 
         public void CloseSeedSheet()
@@ -836,6 +1101,7 @@ namespace LQFarm
             _farm.SetSelectedPlot(-1);
             _farm.Camera.SetInsetBottom(0f);
             _hud.SetActionBarVisible(true);
+            _hud.SetRailVisible(true);
             _hud.Render();
         }
 
@@ -845,14 +1111,22 @@ namespace LQFarm
             if (_sheet == null || !_sheet.IsOpen) return;
             if (_sheetPlot < 0) { PlantEveryEmpty(seedId); CloseSeedSheet(); return; }
 
+            var picked = GameData.Get(seedId);
+            if (!PlotLogic.Fits(picked, _farm.Plots[_sheetPlot]))
+            {
+                Toast(picked != null && picked.big ? "Cây lớn chỉ trồng ở ô đất lớn" : "Ô đất lớn chỉ trồng cây lớn");
+                return;
+            }
             if (!TakeOrBuySeed(seedId)) return;
             if (!_farm.Plant(_sheetPlot, seedId)) return;
+            Sfx.Play(SfxId.Plant);
             MarkDirty(); _hud.Render(); GS.Save();
 
             // Move straight on to the nearest empty bed; slide away when the island is full.
             int next = NearestEmpty(_sheetPlot);
-            if (next < 0) { CloseSeedSheet(); Toast("Đã gieo kín đảo này"); return; }
+            if (next < 0) { CloseSeedSheet(); return; }       // the sheet sliding away says the island is full
             _sheetPlot = next;
+            _sheet.Big = _farm.Plots[next].big;
             _farm.SetSelectedPlot(next);
             _farm.Camera.SetInsetBottom(SeedSheet.Height, _farm.ContentOfPlot(next));
             _sheet.SetSubtitle("Gieo vào ô đang sáng · " + IslandSys.NameOf(_farm.CurrentIsland)
@@ -895,17 +1169,18 @@ namespace LQFarm
             int n = 0;
             foreach (int i in _farm.EmptyPlots())
             {
+                if (!PlotLogic.Fits(seed, _farm.Plots[i])) continue;
                 if (!TakeOrBuySeed(seedId)) break;
-                if (_farm.Plant(i, seedId)) n++; else break;
+                if (_farm.Plant(i, seedId)) { n++; if (n <= 6) Sfx.Play(SfxId.Plant, 0.8f); } else break;
             }
             if (n == 0) return;
             MarkDirty(); _hud.Render(); GS.Save();
 
+            // the beds filling up are the receipt; only the greenhouse, which spends something
+            // the player paid for, is worth a line
             int sheltered = greenBefore - GS.Local.greenhouse;
-            string line = "Đã gieo " + n + " " + (seed != null ? seed.name : "hạt");
             if (sheltered > 0)
-                line += "  ·  nhà kính che " + sheltered + (GS.Local.greenhouse > 0 ? " (còn " + GS.Local.greenhouse + ")" : " (hết)");
-            Toast(line);
+                Toast("Nhà kính che " + sheltered + " ô" + (GS.Local.greenhouse > 0 ? " · còn " + GS.Local.greenhouse + " lượt" : " · đã hết lượt"));
         }
 
         /// <summary>"Gieo" on the bottom bar: the seed sheet in plant-everything mode.</summary>
@@ -927,7 +1202,8 @@ namespace LQFarm
             int n = 0;
             foreach (int i in _farm.EmptyPlots())
             {
-                var id = GS.Local.seeds.FirstOrDefault(k => k.Value > 0).Key;
+                var plot = _farm.Plots[i];
+                var id = GS.Local.seeds.FirstOrDefault(k => k.Value > 0 && PlotLogic.Fits(GameData.Get(k.Key), plot)).Key;
                 if (string.IsNullOrEmpty(id)) break;
                 if (_farm.Plant(i, id)) n++;
             }
@@ -945,8 +1221,8 @@ namespace LQFarm
 
         /// <summary>Water every plot whose window is open.
         ///
-        /// This is the verb the design was missing. Watering cuts 20% off a crop's time and the
-        /// windows are short, so doing it plot by plot across sixteen tiles was work the reward
+        /// This is the verb the design was missing. Every watering takes a fixed time off a crop and
+        /// there are many plots, so doing it plot by plot across sixteen tiles was work the reward
         /// never justified — which meant the system was, in practice, off. One button makes the
         /// whole timed-window design worth having.</summary>
         public void WaterAll()
@@ -955,18 +1231,12 @@ namespace LQFarm
             if (list.Count == 0) { Toast("Chưa tới cữ tưới"); return; }
 
             int n = 0;
-            float saved = 0f;
-            foreach (int i in list)
-            {
-                var p = _farm.Plots[i];
-                float before = p.cut;
-                if (!_farm.Water(i)) continue;
-                n++; saved += p.cut - before;
-            }
+            foreach (int i in list) if (_farm.Water(i)) n++;
             if (n == 0) { Toast("Chưa tới cữ tưới"); return; }
 
+            Sfx.Play(SfxId.Water);
             MarkDirty(); _hud.Render(); GS.Save();
-            Toast("Đã tưới " + n + " cây · sớm hơn " + Fmt.Time(Mathf.RoundToInt(saved)));
+            // every watered plot already floats its own "Sớm 16p"; a toast on top was the spam
         }
 
         /// <summary>Move one island along the row, skipping nothing: a locked island is still
@@ -992,8 +1262,8 @@ namespace LQFarm
         public void DoUpgrade()
         {
             var a = GameData.Level(GS.Local.lv);
-            if (GS.Local.xp < a.xpNeed) { Toast("Chưa đủ kinh nghiệm — hãy thu hoạch thêm!"); return; }
-            if (GS.Local.coin < a.cost) { Toast("Không đủ xu nông trại"); return; }
+            if (GS.Local.xp < a.xpNeed) { Toast("Chưa đủ kinh nghiệm, còn thiếu " + Fmt.N(a.xpNeed - GS.Local.xp) + " XP"); return; }
+            if (GS.Local.coin < a.cost) { Toast("Không đủ xu, còn thiếu " + Fmt.N(a.cost - GS.Local.coin) + " xu"); return; }
 
             if (!GS.Local.LevelUp()) return;
 
@@ -1008,13 +1278,13 @@ namespace LQFarm
             // that actually crosses the gate: "≥ gate" announced it again on every level after.
             if (GS.Local.PlotLevelNow(0) == GS.Local.lv && IslandSys.OpenCount(GS.Local.islands[0]) < IslandSys.PlotsPerIsland)
                 items.Add(new RewardItem(Art.TileEmpty, "Mở bán ô đất · " + Fmt.N(GS.Local.PlotPriceNow(0))));
-            string quick = QuickActions.UnlockedAt(GS.Local.lv);
+            string quick = QuickActions.AnnouncedAt(GS.Local.lv);
             if (quick != null)
                 items.Add(new RewardItem(Theme.Skin.StarGold, "Mở khoá " + quick, Theme.Amber));
             int isle = IslandSys.NextLocked(GS.Local);
             if (isle > 0 && IslandSys.Def(isle).lv == GS.Local.lv)
                 items.Add(new RewardItem(Theme.Skin.Farmhouse, "Đủ cấp mở " + IslandSys.NameOf(isle), Theme.Blue));
-            ShowReward("Nâng cấp thành công!", items);
+            ShowReward("Nâng cấp thành công!", items, SfxId.LevelUp);
         }
 
         public void OpenChests(int tier)
@@ -1022,28 +1292,8 @@ namespace LQFarm
             int n = GS.Local.chests[tier];
             if (n <= 0) { Toast("Bạn chưa có rương loại này"); return; }
 
-            float[] mul = { 1f, 2f, 3.5f, 7f };
-            float[] rareChance = { 0.10f, 0.20f, 0.25f, 1f };
-            int coin = 0;
             var got = new Dictionary<string, int>();
-
-            for (int k = 0; k < n; k++)
-            {
-                coin += Mathf.RoundToInt((600f + UnityEngine.Random.value * 1800f) * mul[tier]);
-                bool rare = UnityEngine.Random.value < rareChance[tier];
-                var pool = GameData.Seeds.Where(s => s.lv <= GS.Local.lv + (rare ? 4 : 0) && (rare ? s.r >= 2 : s.r <= 1)).ToList();
-                if (pool.Count == 0) pool = GameData.Seeds.ToList();
-                var pick = pool[UnityEngine.Random.Range(0, pool.Count)];
-                int qty = rare ? 2 : 3;
-                GS.Local.AddSeed(pick.id, qty);
-                got.TryGetValue(pick.id, out int had);
-                got[pick.id] = had + qty;
-            }
-
-            GS.Local.chests[tier] = 0;
-            GS.Local.AddCoin(coin);
-            GS.Local.Track("chest", n);
-            GS.Local.AddEnergy(GS.Local.EnergyGain(n * 3));
+            long coin = GS.Local.OpenChests(tier, () => UnityEngine.Random.value, got);
             _hud.Render(); RefreshPanel(); GS.Save();
 
             var items = new List<RewardItem> { new RewardItem(Theme.Skin.Coin, "+" + Fmt.N(coin)) };
@@ -1052,7 +1302,7 @@ namespace LQFarm
                 var s = GameData.Get(kv.Key);
                 items.Add(new RewardItem(Art.Icon(s.art, 0), s.name + " ×" + kv.Value));
             }
-            ShowReward("Mở " + n + " " + GameData.Chests[tier].name, items);
+            ShowReward("Mở " + n + " " + GameData.Chests[tier].name, items, SfxId.ChestOpen);
         }
 
         public void SellAll()
@@ -1060,24 +1310,14 @@ namespace LQFarm
             var list = GS.Local.StoreList();
             if (list.Count == 0) { Toast("Kho trống"); return; }
 
-            long total = 0;
-            int count = 0;
-            foreach (var it in list)
-            {
-                total += (long)it.price * it.n;
-                count += it.n;
-                GS.Local.TrackCrop("sellCrop", it.crop, it.n);
-            }
-            GS.Local.store.Clear();
-            GS.Local.AddCoin((int)Mathf.Min(total, int.MaxValue));
-            GS.Local.Track("sell", count);
+            long total = GS.Local.SellAll(out int count);
 
             _hud.Render(); RefreshPanel(); GS.Save();
             ShowReward("Bán sỉ thành công", new List<RewardItem>
             {
                 new RewardItem(Theme.Skin.Coin, "+" + Fmt.N(total)),
                 new RewardItem(Theme.Skin.NavStore, count + " nông sản", Theme.AmberDeep),
-            });
+            }, SfxId.Coins);
         }
 
         public void BuySeed(string id, int qty)
@@ -1091,6 +1331,7 @@ namespace LQFarm
             GS.Local.AddCoin(-(int)cost);
             GS.Local.AddSeed(id, qty);
             _hud.Render(); RefreshPanel(); GS.Save();
+            Sfx.Play(SfxId.Coins);
             Toast("Đã mua " + qty + " gói " + s.name);
         }
 
@@ -1138,7 +1379,7 @@ namespace LQFarm
             {
                 new RewardItem(Theme.Skin.Farmhouse, def.freePlots + " ô đất sẵn sàng", Theme.GreenDeep),
                 new RewardItem(Theme.Skin.StarGold, def.perk, Theme.Amber),
-            });
+            }, SfxId.IslandUnlock);
         }
 
         public void AfterClaim()
@@ -1150,12 +1391,15 @@ namespace LQFarm
 
         public void ClaimTask(Task t, bool daily)
         {
+            // read before the claim: the card must show what was paid, and the chapter numbers
+            // in the table are not what a chapter pays
+            int xp = MissionSys.TaskXp(GS.Local, t, daily), coin = MissionSys.TaskCoin(GS.Local, t, daily);
             if (!GS.Local.ClaimTask(t, daily)) return;
             _hud.Render(); RefreshPanel(); GS.Save();
             ShowReward("Hoàn thành nhiệm vụ", new List<RewardItem>
             {
-                new RewardItem(Theme.Skin.StarGold, "+" + Fmt.N(t.xp) + " XP"),
-                new RewardItem(Theme.Skin.Coin, "+" + Fmt.N(t.coin)),
+                new RewardItem(Theme.Skin.StarGold, "+" + Fmt.N(xp) + " XP"),
+                new RewardItem(Theme.Skin.Coin, "+" + Fmt.N(coin)),
             });
         }
 
@@ -1168,10 +1412,10 @@ namespace LQFarm
             GS.Local.visited.Add(f.id);
             GS.Local.stealLeft--;
 
-            var pool = GameData.Seeds.Where(s => s.lv <= Mathf.Max(1, f.lv)).ToList();
+            var pool = GameData.Seeds.Where(s => s.lv <= Mathf.Max(1, f.lv) && !s.big).ToList();
             var pick = pool.Count > 0 ? pool[UnityEngine.Random.Range(0, pool.Count)] : GameData.Seeds[0];
             int v = UnityEngine.Random.value < 0.25f ? UnityEngine.Random.Range(1, 4) : 0;
-            int coin = 400 + UnityEngine.Random.Range(0, 900);
+            int coin = MissionSys.VisitCoin(GS.Local, UnityEngine.Random.value);
 
             GS.Local.AddProduce(pick.id, v, 1);
             GS.Local.AddCoin(coin);
@@ -1197,9 +1441,39 @@ namespace LQFarm
             switch (it.effect)
             {
                 case "energy":
-                    GS.Local.AddEnergy(300);
-                    extra.Add(new RewardItem(Theme.Skin.NavMagic, "+300 năng lượng", Theme.Purple));
+                {
+                    // Fills the bar, whatever its size. A flat +300 was a whole chest at level 1 and
+                    // a fifth of one at level 30, for a price that grows with the economy.
+                    int before = GS.Local.chests.Sum();
+                    GS.Local.AddEnergy((int)System.Math.Max(1L, GS.Local.EnergyGoal - GS.Local.energy));
+                    int got = GS.Local.chests.Sum() - before;
+                    extra.Add(new RewardItem(Theme.Skin.NavMagic, "+" + got + " rương", Theme.Purple));
                     break;
+                }
+                case "xp2":
+                    GS.Local.buffXpUntil = System.Math.Max(GS.Local.buffXpUntil, GS.Now) + 600_000L;
+                    extra.Add(new RewardItem(Theme.Skin.StarGold, "×2 XP thu hoạch · 10 phút", Theme.Blue));
+                    break;
+                case "tonic":
+                {
+                    int n = 0;
+                    for (int k = 0; k < GS.PlotCount && k < _farm.Plots.Count; k++) if (_farm.Hasten(k, 0.5f)) n++;
+                    if (n == 0) { Toast("Chưa có cây nào đang lớn trên đảo này"); GS.Local.AddCoin(price); return; }
+                    extra.Add(new RewardItem(Theme.Skin.NavMagic, n + " cây chín nhanh", Theme.GreenDeep));
+                    break;
+                }
+                case "chest":
+                    GS.Local.chests[1]++;
+                    extra.Add(new RewardItem(Art.Item("chest_1"), "Vào kho rương", Theme.Purple));
+                    break;
+                case "seedbest":
+                {
+                    var top = GameData.Seeds.Where(s => s.lv <= GS.Local.lv && !s.big).OrderByDescending(s => s.lv).FirstOrDefault()
+                              ?? GameData.Seeds[0];
+                    GS.Local.AddSeed(top.id, 3);
+                    extra.Add(new RewardItem(Art.Icon(top.art, 0), "3 hạt " + top.name, Theme.GreenDeep));
+                    break;
+                }
                 case "mutate":
                     // 10 minutes, not 5. The buff is read at PLANT, so what it is worth is the
                     // number of plantings it covers; five minutes covered barely one sweep.
@@ -1209,7 +1483,7 @@ namespace LQFarm
                 case "forecast":
                     GS.Local.forecastUntil = System.Math.Max(GS.Local.forecastUntil, GS.Now) + ShopSys.ForecastMs;
                     extra.Add(new RewardItem(Art.WeatherIcon(WeatherSys.Next(GS.Local)),
-                                             "Xem trước 12 giờ", Theme.Blue));
+                                             "Dự báo mở trong 12 giờ", Theme.Blue));
                     break;
                 case "green":
                     GS.Local.greenhouse += ShopSys.GreenhouseCharges;
@@ -1236,7 +1510,7 @@ namespace LQFarm
                 }
                 case "seedbag":
                 {
-                    var pool = GameData.Seeds.Where(s => s.lv <= GS.Local.lv).ToList();
+                    var pool = GameData.Seeds.Where(s => s.lv <= GS.Local.lv && !s.big).ToList();
                     for (int k = 0; k < 5; k++)
                     {
                         var p = pool.Count > 0 ? pool[UnityEngine.Random.Range(0, pool.Count)] : GameData.Seeds[0];
@@ -1282,7 +1556,54 @@ namespace LQFarm
 
             var items = new List<RewardItem> { new RewardItem(Art.Crop(it.art), it.name) };
             items.AddRange(extra);
-            ShowReward("Mua thành công", items);
+            ShowReward("Mua thành công", items, SfxId.Coins);
+        }
+
+        /// <summary>Menu ▸ Nhập code. A good code closes the panel and shows what it gave; anything
+        /// else says why in a toast and leaves the field for another try.</summary>
+        public void RedeemCode(string input)
+        {
+            switch (GiftCodes.Redeem(GS.Local, input, out var gift, out bool onlyAdded))
+            {
+                case GiftCodes.Result.Empty:       Toast("Hãy nhập mã quà tặng"); return;
+                case GiftCodes.Result.Unknown:     Toast("Mã không đúng hoặc đã hết hạn"); return;
+                case GiftCodes.Result.AlreadyUsed: Toast("Mã này đã được dùng trên nông trại của bạn"); return;
+            }
+            _farm.RenderAll(); MarkDirty(); _hud.Render(true); GS.Save();
+            CloseAll();
+            var items = new List<RewardItem>();
+            if (!onlyAdded && gift.xp > 0) items.Add(new RewardItem(Theme.Skin.StarGold, "+" + Fmt.Short(gift.xp) + " XP"));
+            if (!onlyAdded && gift.coin > 0) items.Add(new RewardItem(Theme.Skin.Coin, "+" + Fmt.Short(gift.coin) + " xu"));
+            if (gift.eggs > 0) items.Add(new RewardItem(Art.Item("item_egg"), "+" + gift.eggs + " trứng", Theme.Purple));
+            ShowReward(string.IsNullOrEmpty(gift.note) ? "Nhận quà thành công" : gift.note, items, SfxId.Legendary);
+        }
+
+        /// <summary>A Trang trí card was tapped: buy it, wear it, or take it off.</summary>
+        public void TapCosmetic(Cosmetic c)
+        {
+            var s = GS.Local;
+            if (!Cosmetics.Owns(s, c.id))
+            {
+                if (s.coin < c.price) { Toast("Không đủ xu nông trại"); return; }
+                Cosmetics.Buy(s, c.id);
+                AfterCosmetic();
+                ShowReward("Mua thành công", new List<RewardItem>
+                {
+                    new RewardItem(Art.Item(c.art), c.name),
+                    new RewardItem(Theme.Skin.Check, "Đang dùng · " + c.desc, Theme.GreenDeep),
+                }, SfxId.Coins);
+                return;
+            }
+            if (Cosmetics.IsWorn(s, c.id)) { Cosmetics.TakeOff(s, c.slot); Toast("Đã tháo " + c.name); }
+            else { Cosmetics.Wear(s, c.id); Toast("Đang dùng " + c.name); }
+            Sfx.Play(SfxId.Toggle);
+            AfterCosmetic();
+        }
+
+        void AfterCosmetic()
+        {
+            _farm.RenderAll();
+            _hud.Render(); RefreshPanel(); GS.Save();
         }
 
         public void ClaimSet(CollectionSet set)
@@ -1351,13 +1672,17 @@ namespace LQFarm
 
         RectTransform _reward;
 
-        public void ShowReward(string title, List<RewardItem> items)
+        public void ShowReward(string title, List<RewardItem> items, SfxId cue = SfxId.Claim)
         {
+            Sfx.Play(cue);
             CloseReward();
 
             var scrim = UIKit.Node("rewardScrim", _overlayLayer);
             scrim.Stretch();
-            var im = scrim.gameObject.AddComponent<Image>();
+            var bleed = UIKit.Node("bleed", scrim);
+            bleed.Stretch();
+            FullBleed.On(bleed);
+            var im = bleed.gameObject.AddComponent<Image>();
             im.color = new Color(0.03f, 0.07f, 0.05f, 0.55f);
             var btn = scrim.gameObject.AddComponent<Button>();
             btn.targetGraphic = im;
@@ -1369,29 +1694,23 @@ namespace LQFarm
             var card = UIKit.Node("card", scrim);
             card.Anchor(UIKit.Center, new Vector2(0, 10), new Vector2(w, 330));
 
-            var shadow = UIKit.Img(card, Theme.Shadow(26, 24), new Color(0, 0, 0, 0.4f), "shadow");
-            shadow.type = Image.Type.Sliced;
-            shadow.rectTransform.Stretch(-20, -14, -20, -26);
-
             var rays = UIKit.Img(card, Theme.Glow(), new Color(1f, 0.92f, 0.6f, 0.5f), "rays");
             rays.rectTransform.Anchor(UIKit.Center, new Vector2(0, 20), new Vector2(w + 220, 460));
 
-            var bg = UIKit.Round(card, Theme.Cream, 26, "bg");
-            bg.rectTransform.Stretch();
+            var bg = SurfaceLook.Add(card, Looks.Paper, 28f).Fill;
             bg.raycastTarget = true;
+            // the glow belongs behind the card's shadow, not on top of it
+            rays.rectTransform.SetAsFirstSibling();
 
-            var head = UIKit.Round(card, Theme.GreenDeep, 26, "head");
-            head.rectTransform.anchorMin = new Vector2(0, 1);
-            head.rectTransform.anchorMax = new Vector2(1, 1);
-            head.rectTransform.pivot = new Vector2(0.5f, 1);
-            head.rectTransform.offsetMin = new Vector2(0, -66);
-            head.rectTransform.offsetMax = Vector2.zero;
-            var flat = UIKit.Round(head.transform, Theme.GreenDeep, 6, "flat");
-            flat.rectTransform.anchorMin = new Vector2(0, 0);
-            flat.rectTransform.anchorMax = new Vector2(1, 0);
-            flat.rectTransform.pivot = new Vector2(0.5f, 0);
-            flat.rectTransform.sizeDelta = new Vector2(0, 26);
-            UIKit.LabelOutlined(head.transform, title, 26, Color.white).rectTransform.Stretch(16, 0, 16, 0);
+            var head = UIKit.Node("head", card);
+            head.anchorMin = new Vector2(0, 1);
+            head.anchorMax = new Vector2(1, 1);
+            head.pivot = new Vector2(0.5f, 1);
+            head.offsetMin = new Vector2(3, -69);
+            head.offsetMax = new Vector2(-3, -3);
+            SurfaceLook.Add(head, Looks.RibbonGreen, 25f, topOnly: true);
+            UIKit.LabelOutlined(head, title, 28, Color.white, TextAnchor.MiddleCenter, Looks.RibbonGreen.inkLine)
+                 .rectTransform.Stretch(16, 0, 16, 4);
 
             var row = UIKit.Node("items", card);
             row.Anchor(UIKit.Center, new Vector2(0, 2), new Vector2(w - 40, 160));
@@ -1400,7 +1719,7 @@ namespace LQFarm
                 var it = items[i];
                 var cell = UIKit.Node("it", row);
                 cell.Anchor(UIKit.Center, new Vector2((i - (items.Count - 1) / 2f) * 148f, 0), new Vector2(136, 156));
-                UIKit.Round(cell, Theme.Cream2, 18, "bg").rectTransform.Stretch();
+                SurfaceLook.Add(cell, Looks.Well, 18f);
 
                 var art = UIKit.Node("art", cell);
                 art.Anchor(UIKit.Top, new Vector2(0, -10), new Vector2(100, 100));
@@ -1431,36 +1750,129 @@ namespace LQFarm
             _reward = null;
         }
 
-        readonly List<RectTransform> _toasts = new List<RectTransform>();
+        // ============================================================
+        // toast: one line at a time
+        // ============================================================
+        // Three stacked dark glass bars used to pile up whenever the player tapped quickly ("Đã gieo
+        // kín đảo này", "Chưa tới cữ tưới" ×3). Now there is one light pill: the same message again
+        // counts up ("×3") instead of stacking, a different one replaces the text in place.
+        RectTransform _toast;
+        Text _toastLabel;
+        CanvasGroup _toastGroup;
+        string _toastMsg;
+        int _toastCount;
+        float _toastUntil, _toastSoundAt;
+        Coroutine _toastLife;
+
+        const float ToastSeconds = 1.8f;
 
         public void Toast(string message)
         {
-            while (_toasts.Count >= 3)
-            {
-                var old = _toasts[0];
-                _toasts.RemoveAt(0);
-                if (old != null) Destroy(old.gameObject);
-            }
+            if (string.IsNullOrEmpty(message)) return;
+            // held until the arrival cinematic is over; the latest one is what is shown
+            if (_cinematic != null) { _heldToast = message; return; }
+            bool refusal = Sfx.LooksLikeRefusal(message);
+            bool same = _toast != null && _toast.gameObject.activeSelf && message == _toastMsg;
+            // a refusal repeated by a quick double tap says so once
+            if (refusal && (!same || Time.unscaledTime - _toastSoundAt > 0.8f)) { Sfx.Play(SfxId.Error); _toastSoundAt = Time.unscaledTime; }
 
-            var t = UIKit.Node("toast", _toastLayer);
-            t.Anchor(UIKit.Bottom, new Vector2(0, 104 + _toasts.Count * 52), new Vector2(520, 46));
-            var bg = UIKit.Round(t, new Color(0.08f, 0.16f, 0.13f, 0.92f), 23, "bg");
-            bg.rectTransform.Stretch();
-            var label = UIKit.Label(t, message, 20, Color.white);
-            label.rectTransform.Stretch(20, 0, 20, 0);
+            // the worn frame (Trang trí ▸ Thông báo): rebuilt when it changes
+            string skin = Cosmetics.Worn(GS.Local, CosmeticSlot.Toast);
+            if (_toast != null && skin != _toastSkin) { Destroy(_toast.gameObject); _toast = null; }
+            if (_toast == null) BuildToast(skin);
+            _toastCount = same ? _toastCount + 1 : 1;
+            _toastMsg = message;
+            _toastLabel.text = _toastCount > 1 ? message + "  ×" + _toastCount : message;
+            _toastLabel.color = refusal ? _toastRefusalInk : _toastInk;
 
-            _toasts.Add(t);
-            Tween.PopIn(t, 0.18f, 0.8f);
-            StartCoroutine(KillToast(t, 2.1f));
+            float w = Mathf.Clamp(_toastLabel.preferredWidth + 56f, 200f, 820f);
+            _toast.sizeDelta = new Vector2(w, 44f);
+            bool wasHidden = !_toast.gameObject.activeSelf || _toastGroup.alpha < 0.99f;
+            _toast.gameObject.SetActive(true);
+            _toast.SetAsLastSibling();
+            _toastGroup.alpha = 1f;
+            if (wasHidden) Tween.PopIn(_toast, 0.16f, 0.88f);
+            else Tween.PopIn(_toast, 0.12f, 0.96f);           // a small nudge: the text changed
+
+            _toastUntil = Time.unscaledTime + ToastSeconds;
+            if (_toastLife == null) _toastLife = StartCoroutine(ToastLife());
         }
 
-        IEnumerator KillToast(RectTransform t, float delay)
+        string _toastSkin;
+        Color _toastInk = Theme.Ink, _toastRefusalInk = Theme.Hex("#9A3A22");
+
+        void BuildToast(string skin)
         {
-            yield return new WaitForSecondsRealtime(delay);
-            _toasts.Remove(t);
-            if (t == null) yield break;
-            var g = t.gameObject.AddComponent<CanvasGroup>();
-            Tween.Fade(g, 0f, 0.2f, () => { if (t != null) Destroy(t.gameObject); });
+            _toastSkin = skin;
+            _toast = UIKit.Node("toast", _toastLayer);
+            _toast.Anchor(UIKit.Bottom, new Vector2(0, 108), new Vector2(360, 44));
+            var look = Looks.Paper;
+            look.shadow = new Color(0f, 0f, 0f, 0.16f); look.blur = 12f; look.drop = new Vector2(0f, -3f);
+            look.edgeW = 2f;
+            _toastInk = Theme.Ink; _toastRefusalInk = Theme.Hex("#9A3A22");
+            bool stars = false;
+            switch (skin)
+            {
+                case "ts_wood":
+                    look.top = Theme.Hex("#CF955A"); look.bottom = Theme.Hex("#A56C3B"); look.edge = Theme.Hex("#5A3719"); look.edgeW = 3f;
+                    look.rim = new Color(1f, 0.9f, 0.7f, 0.6f);
+                    _toastInk = Theme.Hex("#FFF4E2"); _toastRefusalInk = Theme.Hex("#FFD2B8");
+                    break;
+                case "ts_candy":
+                    look.top = Theme.Hex("#FFDDEB"); look.bottom = Theme.Hex("#FFB5D3"); look.edge = Theme.Hex("#E2609A"); look.edgeW = 3f;
+                    _toastInk = Theme.Hex("#7E1B47"); _toastRefusalInk = Theme.Hex("#B3122F");
+                    break;
+                case "ts_night":
+                    look.top = Theme.Hex("#3C4C90"); look.bottom = Theme.Hex("#1F285A"); look.edge = Theme.Hex("#8FA3FF"); look.edgeW = 2.5f;
+                    look.rim = new Color(0.7f, 0.8f, 1f, 0.5f);
+                    _toastInk = Theme.Hex("#EEF2FF"); _toastRefusalInk = Theme.Hex("#FFB4A0");
+                    stars = true;
+                    break;
+                case "ts_gold":
+                    look.top = Theme.Hex("#FFF0AE"); look.bottom = Theme.Hex("#F0BE48"); look.edge = Theme.Hex("#B9831A"); look.edgeW = 3f;
+                    _toastInk = Theme.Hex("#5E3A02"); _toastRefusalInk = Theme.Hex("#9A2A12");
+                    stars = true;
+                    break;
+            }
+            SurfaceLook.Add(_toast, look, SurfaceLook.Pill);
+            if (stars)
+            {
+                var spark = Art.Load("Art/fx/mut_spark");
+                foreach (var (x, y, sz) in new[] { (-6f, 14f, 18f), (1f, -12f, 12f) })
+                {
+                    var st = UIKit.Img(_toast, spark, skin == "ts_gold" ? Color.white : Theme.Hex("#FFF3A0"), "star");
+                    st.raycastTarget = false;
+                    st.rectTransform.anchorMin = st.rectTransform.anchorMax = new Vector2(x < 0 ? 0f : 1f, 0.5f);
+                    st.rectTransform.sizeDelta = new Vector2(sz, sz);
+                    st.rectTransform.anchoredPosition = new Vector2(x < 0 ? 14f : -12f, y);
+                }
+            }
+            _toastLabel = UIKit.Label(_toast, "", 19, _toastInk);
+            _toastLabel.rectTransform.Stretch(24, 0, 24, 1);
+            _toastGroup = _toast.gameObject.AddComponent<CanvasGroup>();
+            _toastGroup.blocksRaycasts = false;
+            _toastGroup.interactable = false;
+        }
+
+        IEnumerator ToastLife()
+        {
+            while (true)
+            {
+                if (Time.unscaledTime < _toastUntil) { yield return null; continue; }
+                // fade, unless a new message arrives part-way
+                float a = 1f;
+                while (a > 0f && Time.unscaledTime >= _toastUntil)
+                {
+                    a -= Time.unscaledDeltaTime / 0.22f;
+                    if (_toastGroup != null) _toastGroup.alpha = Mathf.Max(0f, a);
+                    yield return null;
+                }
+                if (Time.unscaledTime < _toastUntil) continue;
+                if (_toast != null) _toast.gameObject.SetActive(false);
+                _toastMsg = null; _toastCount = 0;
+                _toastLife = null;
+                yield break;
+            }
         }
     }
 
@@ -1471,6 +1883,53 @@ namespace LQFarm
         void OnRectTransformDimensionsChange() { onResize?.Invoke(); }
     }
 
+    /// <summary>Lets one backdrop inside a safe-area layer reach the real screen edges.
+    ///
+    /// The popup and overlay layers are inset to the safe area so their cards and buttons clear a
+    /// notch, and that took the dark scrim behind every panel with them: on a phone with a camera
+    /// cut-out the farm showed, undimmed, in a strip down each side. A scrim or a sheet's paper
+    /// carries this; what sits on it stays where the safe area put it.</summary>
+    public class FullBleed : MonoBehaviour
+    {
+        public bool left = true, right = true, bottom = true, top = true;
+        RectTransform _rt, _root;
+        Vector2 _baseMin, _baseMax;
+        bool _based;
+        static readonly Vector3[] Corners = new Vector3[4];
+
+        public static FullBleed On(RectTransform rt, bool left = true, bool right = true, bool bottom = true, bool top = true)
+        {
+            var fb = rt.gameObject.AddComponent<FullBleed>();
+            fb.left = left; fb.right = right; fb.bottom = bottom; fb.top = top;
+            fb.Apply();
+            return fb;
+        }
+
+        void LateUpdate() { Apply(); }
+
+        void Apply()
+        {
+            if (_rt == null) _rt = (RectTransform)transform;
+            if (!_based) { _baseMin = _rt.offsetMin; _baseMax = _rt.offsetMax; _based = true; }
+            var parent = _rt.parent as RectTransform;
+            if (parent == null) return;
+            if (_root == null)
+            {
+                var c = GetComponentInParent<Canvas>();
+                if (c == null) return;
+                _root = c.rootCanvas.transform as RectTransform;
+            }
+            _root.GetWorldCorners(Corners);
+            Vector2 lo = parent.InverseTransformPoint(Corners[0]);
+            Vector2 hi = parent.InverseTransformPoint(Corners[2]);
+            var pr = parent.rect;
+            var min = new Vector2(left ? lo.x - pr.xMin : _baseMin.x, bottom ? lo.y - pr.yMin + _baseMin.y : _baseMin.y);
+            var max = new Vector2(right ? hi.x - pr.xMax : _baseMax.x, top ? hi.y - pr.yMax : _baseMax.y);
+            if (_rt.offsetMin != min) _rt.offsetMin = min;
+            if (_rt.offsetMax != max) _rt.offsetMax = max;
+        }
+    }
+
     /// <summary>Insets a layer to the device safe area, so no control hides under a notch,
     /// a rounded corner or the gesture bar.</summary>
     public class SafeAreaFitter : MonoBehaviour
@@ -1478,14 +1937,29 @@ namespace LQFarm
         RectTransform _rt;
         Rect _applied;
 
+        /// <summary>Editor-only stand-in for a phone's cut-outs, as shares of the screen: the
+        /// Editor always reports the whole screen as safe, so without this the notch path is never
+        /// exercised before a device build. Null means the real <c>Screen.safeArea</c>.</summary>
+        public static Rect? Simulated;
+
+        public static Rect SafeArea
+        {
+            get
+            {
+                if (!Simulated.HasValue) return Screen.safeArea;
+                var r = Simulated.Value;
+                return new Rect(r.x * Screen.width, r.y * Screen.height, r.width * Screen.width, r.height * Screen.height);
+            }
+        }
+
         void Start() { _rt = (RectTransform)transform; Apply(); }
 
-        void Update() { if (Screen.safeArea != _applied) Apply(); }
+        void Update() { if (SafeArea != _applied) Apply(); }
 
         void Apply()
         {
             if (_rt == null) return;
-            var sa = Screen.safeArea;
+            var sa = SafeArea;
             if (Screen.width <= 0 || Screen.height <= 0) return;
             _applied = sa;
 
@@ -1501,58 +1975,4 @@ namespace LQFarm
         }
     }
 
-    /// <summary>Drifts a cloud sideways, wrapping round once it leaves the screen.</summary>
-    public class Drifter : MonoBehaviour
-    {
-        public float speed = 20f, startX;
-
-        RectTransform _rt, _parent;
-        float _x;
-
-        void Start()
-        {
-            _rt = (RectTransform)transform;
-            _parent = (RectTransform)transform.parent;
-            _x = startX;
-        }
-
-        void Update()
-        {
-            if (_rt == null || _parent == null) return;
-            float span = _parent.rect.width + _rt.rect.width * 2f;
-            _x += speed * Time.unscaledDeltaTime;
-            if (_x > span) _x -= span;
-            var p = _rt.anchoredPosition;
-            p.x = _x - _rt.rect.width;
-            _rt.anchoredPosition = p;
-        }
-    }
-
-    /// <summary>A petal: falls slowly, sways as it goes, restarts at the top.</summary>
-    public class Faller : MonoBehaviour
-    {
-        public float speed = 20f, swing = 30f, phase, startX, startY;
-
-        RectTransform _rt, _parent;
-        float _y, _baseX;
-
-        void Start()
-        {
-            _rt = (RectTransform)transform;
-            _parent = (RectTransform)transform.parent;
-            _baseX = startX * Mathf.Max(1f, _parent.rect.width);
-            _y = startY * Mathf.Max(1f, _parent.rect.height);
-        }
-
-        void Update()
-        {
-            if (_rt == null || _parent == null) return;
-            float h = _parent.rect.height;
-            _y += speed * Time.unscaledDeltaTime;
-            if (_y > h + 40f) { _y = -40f; _baseX = UnityEngine.Random.value * _parent.rect.width; }
-            float t = Time.unscaledTime + phase;
-            _rt.anchoredPosition = new Vector2(_baseX + Mathf.Sin(t * 0.8f) * swing, -_y);
-            _rt.localRotation = Quaternion.Euler(0, 0, Mathf.Sin(t) * 35f);
-        }
-    }
 }

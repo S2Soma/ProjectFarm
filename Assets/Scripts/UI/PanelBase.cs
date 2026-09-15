@@ -25,13 +25,36 @@ namespace LQFarm
         // ------------------------------------------------------------
         // shared building blocks
         // ------------------------------------------------------------
-        /// <summary>A soft inset well — the sunken area lists and grids sit in.</summary>
+        /// <summary>M5 — the recessed area lists and grids sit in. It was the Kenney brown inset
+        /// with torn-paper edges: a dark, ragged box on a cream card, the heaviest thing on every
+        /// panel although it holds nothing but the rows on top of it.</summary>
         protected static RectTransform Well(Transform parent, float top = 0, float bottom = 0)
         {
-            var well = UIKit.Img(parent, Theme.Skin.Inset, Color.white, "well");
-            well.type = Image.Type.Sliced;
-            well.rectTransform.Stretch(0, top, 0, bottom);
-            return well.rectTransform;
+            var well = UIKit.Node("well", parent);
+            well.Stretch(0, top, 0, bottom);
+            SurfaceLook.Add(well, Looks.Well, 18f);
+            return well;
+        }
+
+        /// <summary>Rows are removed from the layout NOW, not at the end of the frame: Destroy is
+        /// deferred, so a refresh used to lay the new rows out below the dying ones for a frame and
+        /// the list sat part-way down its well.</summary>
+        protected static void ClearList(RectTransform list)
+        {
+            for (int i = list.childCount - 1; i >= 0; i--)
+            {
+                var c = list.GetChild(i);
+                c.SetParent(null, false);
+                UnityEngine.Object.Destroy(c.gameObject);
+            }
+        }
+
+        protected static void ScrollTop(RectTransform list)
+        {
+            LayoutRebuilder.ForceRebuildLayoutImmediate(list);
+            list.anchoredPosition = new Vector2(list.anchoredPosition.x, 0f);
+            var sr = list.GetComponentInParent<ScrollRect>();
+            if (sr != null) { sr.StopMovement(); sr.verticalNormalizedPosition = 1f; }
         }
 
         /// <summary>An item cell with a rarity-tinted frame, artwork and a count badge.</summary>
@@ -40,14 +63,16 @@ namespace LQFarm
                                                 Action onClick = null)
         {
             var cell = UIKit.Node("cell", parent);
-            var face = UIKit.Round(cell, dim ? Theme.Cream3 : Theme.Cream, 16, "face");
-            face.rectTransform.Stretch();
-            face.raycastTarget = onClick != null;
-
-            var frame = UIKit.Img(cell, Theme.Round(16), Theme.Rarity[Mathf.Clamp(rarity, 0, 3)].Alpha(dim ? 0.35f : 0.9f), "frame");
-            frame.type = Image.Type.Sliced;
+            // The rarity ring and the face are concentric (16 + 3 = 19), and the whole cell gets
+            // a contact shadow so it sits ON the well instead of being printed into it.
+            var frame = UIKit.Img(cell, null, Theme.Rarity[Mathf.Clamp(rarity, 0, 3)].Alpha(dim ? 0.35f : 0.9f), "frame");
             frame.rectTransform.Stretch(-3, -3, -3, -3);
-            frame.transform.SetAsFirstSibling();
+            Chrome.Shape(frame, 19f);
+            var face = UIKit.Img(cell, null, dim ? Theme.Cream3 : Theme.Cream, "face");
+            face.rectTransform.Stretch();
+            Chrome.Shape(face, 16f);
+            face.gameObject.AddComponent<VGradient>().Set(Color.white, new Color(0.95f, 0.92f, 0.86f, 1f));
+            face.raycastTarget = onClick != null;
 
             if (art != null)
             {
@@ -65,9 +90,10 @@ namespace LQFarm
             {
                 var badge = UIKit.Node("n", cell);
                 badge.Anchor(UIKit.BottomRight, new Vector2(-4, 4), new Vector2(44, 24));
-                UIKit.Round(badge, Theme.Ink.Alpha(0.78f), 12, "bg").rectTransform.Stretch();
-                UIKit.Label(badge, count, 17, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold)
-                     .rectTransform.Stretch();
+                var bl = Looks.Glass;
+                bl.shadow = Color.clear; bl.edgeW = 1.5f; bl.rimW = 1.5f;
+                SurfaceLook.Add(badge, bl);
+                UIKit.LabelOutlined(badge, count, 16, Color.white).rectTransform.Stretch();
             }
 
             if (!string.IsNullOrEmpty(caption))
@@ -90,7 +116,9 @@ namespace LQFarm
             return cell;
         }
 
-        /// <summary>Marks a cell as the current selection.</summary>
+        /// <summary>Marks a cell as the current selection: the ring thickens to 4 px in the
+        /// accent colour and stays concentric (16 + 4 = 20). The old -6 px ring was drawn outside
+        /// the grid cell, into the gap, and was cut off by the list's mask on the first row.</summary>
         protected static void MarkSelected(RectTransform cell, bool on, Color accent)
         {
             var frame = cell.Find("frame")?.GetComponent<Image>();
@@ -98,7 +126,8 @@ namespace LQFarm
             if (on)
             {
                 frame.color = accent;
-                frame.rectTransform.Stretch(-6, -6, -6, -6);
+                frame.rectTransform.Stretch(-4, -4, -4, -4);
+                Chrome.Shape(frame, 20f);
             }
         }
 
@@ -109,9 +138,9 @@ namespace LQFarm
             var le = row.gameObject.AddComponent<LayoutElement>();
             le.preferredHeight = height;
             le.minHeight = height;
-            var bg = UIKit.Img(row, Theme.Skin.PanelLight, Color.white, "bg");
-            bg.type = Image.Type.Sliced;
-            bg.rectTransform.Stretch();
+            // Radius 16 inside the well's 18, no border, a 2 px contact shadow. The Kenney cream
+            // plate it replaces had 6 px corners and a white 1 px outline: a box in a box.
+            SurfaceLook.Add(row, Looks.Row, 16f);
             return row;
         }
 
@@ -120,16 +149,44 @@ namespace LQFarm
         {
             var chip = UIKit.Node("chip", parent);
             chip.sizeDelta = new Vector2(112, 34);
-            UIKit.Round(chip, color.Alpha(0.16f), 17, "bg").rectTransform.Stretch();
+            var bg = UIKit.Img(chip, null, color.Alpha(0.16f), "bg");
+            bg.rectTransform.Stretch();
+            Chrome.Shape(bg, 17f);
             if (icon != null)
             {
                 var ic = UIKit.Img(chip, icon, Color.white, "ic");
                 ic.preserveAspect = true;
-                ic.rectTransform.Anchor(UIKit.Left, new Vector2(20, 0), new Vector2(26, 26));
+                ic.rectTransform.Anchor(UIKit.Left, new Vector2(6, 0), new Vector2(24, 24));
             }
-            UIKit.Label(chip, text, 18, color, TextAnchor.MiddleRight, FontStyle.Bold)
-                 .rectTransform.Stretch(36, 0, 10, 0);
+            // 16 px and a 32 px icon column: a five-digit reward ("32.328") ran into the coin at 18
+            UIKit.Label(chip, text, 16, color, TextAnchor.MiddleRight, FontStyle.Bold)
+                 .rectTransform.Stretch(32, 0, 10, 0);
             return chip;
+        }
+
+        /// <summary>A contract grade as a medal (Tools/gen_items.py), optionally captioned. It was a
+        /// coloured text pill — in rows that already end in a pill-shaped button, a second pill
+        /// on the left read as another thing to press.</summary>
+        protected static RectTransform GradeMedal(RectTransform row, Grade g, Vector2 centre, float size, bool caption)
+        {
+            string[] keys = { null, "bronze", "silver", "gold", "diamond" };
+            var node = UIKit.Node("grade", row);
+            node.Anchor(UIKit.Left, new Vector2(centre.x - size / 2f, centre.y), new Vector2(size, size));
+            string key = keys[Mathf.Clamp((int)g, 0, keys.Length - 1)];
+            if (key != null)
+            {
+                var im = UIKit.Img(node, Art.Item("medal_" + key), Color.white, "medal");
+                im.preserveAspect = true;
+                im.rectTransform.Stretch();
+            }
+            if (caption)
+            {
+                var gd = MissionSys.Def(g);
+                var lab = UIKit.Label(row, gd.name, 15, Color.Lerp(Theme.Hex(gd.hex), Theme.Ink, 0.45f),
+                                      TextAnchor.MiddleCenter, FontStyle.Bold);
+                lab.rectTransform.Anchor(UIKit.Left, new Vector2(centre.x - 55f, centre.y - size / 2f - 12f), new Vector2(110, 22));
+            }
+            return node;
         }
 
         protected static Sprite CoinIcon => Theme.Skin.Coin;

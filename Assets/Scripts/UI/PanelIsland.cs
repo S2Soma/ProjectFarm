@@ -17,7 +17,9 @@ namespace LQFarm
         public IslandPanel(GameApp app, int index) : base(app) { _index = index; }
 
         public override string Title => IslandSys.Def(_index).name;
-        public override Vector2 Size => new Vector2(760, 500);
+        // 580: at 500 the claim note ("Cần cấp 16…") was printed across the third tribute bar and
+        // the claim button sat on the third row's lower edge.
+        public override Vector2 Size => new Vector2(760, 580);
 
         readonly List<RectTransform> _rows = new List<RectTransform>();
         Button _claim;
@@ -50,7 +52,7 @@ namespace LQFarm
             gate.rectTransform.Anchor(UIKit.TopLeft, new Vector2(20, -68), new Vector2(690, 22));
             gate.rectTransform.pivot = new Vector2(0, 1);
 
-            var hdr = UIKit.Label(body, "Cống nạp — nông sản nộp vào sẽ bị tiêu mất", 17, Theme.Ink,
+            var hdr = UIKit.Label(body, "Cống nạp: nông sản nộp vào sẽ bị tiêu mất", 17, Theme.Ink,
                                   TextAnchor.MiddleLeft, FontStyle.Bold);
             hdr.rectTransform.Anchor(UIKit.TopLeft, new Vector2(12, -108), new Vector2(500, 24));
             hdr.rectTransform.pivot = new Vector2(0, 1);
@@ -61,7 +63,7 @@ namespace LQFarm
             _claim.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(0, 14), new Vector2(300, 60));
 
             _claimNote = UIKit.Label(body, "", 15, Theme.InkSoft, TextAnchor.MiddleCenter);
-            _claimNote.rectTransform.Anchor(UIKit.Bottom, new Vector2(0, 80), new Vector2(640, 22));
+            _claimNote.rectTransform.Anchor(UIKit.Bottom, new Vector2(0, 84), new Vector2(640, 24));
 
             Refresh();
         }
@@ -174,10 +176,10 @@ namespace LQFarm
 
             // One reason at a time, in the order the player can act on them.
             if (!inOrder) _claimNote.text = "Cần mở " + IslandSys.NameOf(_index - 1) + " trước";
-            else if (!lvOk) _claimNote.text = "Cần cấp " + def.lv + " — bạn đang cấp " + s.lv;
+            else if (!lvOk) _claimNote.text = "Cần cấp " + def.lv + ", bạn đang cấp " + s.lv;
             else if (!tributeOk) _claimNote.text = "Còn thiếu cống nạp";
             else if (!coinOk) _claimNote.text = "Cần " + Fmt.N(def.coin - s.coin) + " xu nữa";
-            else _claimNote.text = def.perk + " — áp dụng cho mọi đảo";
+            else _claimNote.text = def.perk + ", áp dụng cho mọi đảo";
         }
     }
 }
