@@ -57,6 +57,9 @@
 - [x] W2 `Tools/deploy_web.sh` đẩy bản build lên nhánh `gh-pages` (chỉ bản build, force-push) — đã đẩy lần đầu 15/9 16:46
 - [ ] W3 **Chủ dự án:** public repo + Settings ▸ Pages ▸ gh-pages / root → https://s2soma.github.io/ProjectFarm/
 - [ ] W4 Chơi thử bản web trên máy tính và điện thoại: tải trang, lưu sau khi tải lại trang, đăng nhập/đồng bộ, âm thanh sau cú chạm đầu
+- [x] W5 Toàn màn hình: thẻ "Chơi toàn màn hình" khi tải xong trên điện thoại + nút kính cạnh ví (Esc/back cập nhật icon);
+  iPhone: hướng dẫn "Thêm vào MH chính" + web manifest `display: fullscreen`
+- [ ] W6 Thử toàn màn hình thật: Chrome Android (khoá xoay ngang), Safari iPad, Safari iPhone (thẻ hướng dẫn, mở từ MH chính), Chrome/Safari máy tính
 
 ## 🔵 Đợt góp ý 15/9 chiều: icon, hướng dẫn, ô khoá (2026-09-15)
 

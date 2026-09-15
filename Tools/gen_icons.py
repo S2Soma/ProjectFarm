@@ -243,10 +243,36 @@ def music(size=192, on=True):
     return _glyph(draw, size)
 
 
+def fullscreen(size=192, enter=True):
+    """Web build ▸ toàn màn hình: four corner brackets pointing out (enter) or in (exit)."""
+    def draw(d, k):
+        W = 24                      # stroke, on the 192 grid
+        def stroke(pts):
+            d.line([(x * k, y * k) for x, y in pts], fill=255, width=int(W * k), joint="curve")
+            for x, y in (pts[0], pts[-1]):
+                r = W / 2
+                d.ellipse(((x - r) * k, (y - r) * k, (x + r) * k, (y + r) * k), fill=255)
+        lo, hi, arm = 30, 162, 46
+        for sx, sy in ((0, 0), (1, 0), (0, 1), (1, 1)):
+            cx = hi if sx else lo
+            cy = hi if sy else lo
+            dx = -1 if sx else 1            # arms run from the corner toward the centre
+            dy = -1 if sy else 1
+            if enter:
+                stroke([(cx + dx * arm, cy), (cx, cy), (cx, cy + dy * arm)])
+            else:
+                # the bracket's corner sits inside, with a wide gap between the four: at the same
+                # arm length the inner corners were 40 units apart and the glyph read as "#"
+                ix, iy = cx + dx * 38, cy + dy * 38
+                stroke([(ix, cy + dy * 2), (ix, iy), (cx + dx * 2, iy)])
+    return _glyph(draw, size)
+
+
 ALL = ((droplet, "droplet"), (checkmark, "check"), (exclamation, "alert"),
        (grid_more, "more"), (lambda: speaker(on=True), "sound_on"), (lambda: speaker(on=False), "sound_off"),
        (upgrade_arrow, "nav_upgrade"), (album, "nav_album2"), (account, "account"), (cloud, "cloud"), (phone, "phone"),
-       (lambda: music(on=True), "music_on"), (lambda: music(on=False), "music_off"))
+       (lambda: music(on=True), "music_on"), (lambda: music(on=False), "music_off"),
+       (lambda: fullscreen(enter=True), "fullscreen_on"), (lambda: fullscreen(enter=False), "fullscreen_off"))
 
 if __name__ == "__main__":
     import sys

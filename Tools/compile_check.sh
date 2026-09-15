@@ -30,6 +30,8 @@ WITH_EDITOR=0
   echo "-nowarn:0169,0414,0649,0618,0162"
   # The project ships with the new Input System only; game code branches on this.
   echo "-define:ENABLE_INPUT_SYSTEM"
+  # platform branches: DEFINES="UNITY_WEBGL" Tools/compile_check.sh compiles the web-only code too
+  for d in ${DEFINES:-}; do echo "-define:$d"; done
 
   echo "-r:$UNITY/Resources/Scripting/NetStandard/ref/2.1.0/netstandard.dll"
 

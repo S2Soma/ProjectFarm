@@ -661,6 +661,16 @@ không bị đụng). Bật một lần: repo Settings ▸ Pages ▸ Deploy from
 - Supabase đã mở CORS cho mọi origin (đã kiểm với origin `s2soma.github.io`), đăng nhập/đồng bộ chạy được trên web.
 - Chuyển build target sang WebGL là import lại toàn bộ asset; `BuildAndroid` tự chuyển về Android khi build APK.
 - Trình duyệt chặn âm thanh tới lần chạm đầu tiên — nhạc nền bắt đầu sau cú chạm đầu, không phải lỗi.
+- **Toàn màn hình** (15/9): logic nằm trong trang (`window.MatuFullscreen` ở `index.html`: `requestFullscreen` trên
+  `documentElement` + khoá xoay ngang, bị từ chối thì thử lại ở cú chạm kế), gọi từ game qua `Plugins/WebGL/MatuFullscreen.jslib`
+  → `UI/WebFullscreen.cs`. Hai lối vào: **thẻ "Chơi toàn màn hình"** hiện khi tải xong trên điện thoại (một chạm, nằm trên lớp
+  nhắc xoay ngang) và **nút tròn kính cạnh ví** trên HUD (chỉ bản web; menu đã hết chỗ). Icon `fullscreen_on/off` (`gen_icons.py`),
+  cập nhật mỗi giây trong `Hud.Render` (Esc / nút back có thể thoát bất cứ lúc nào).
+  **iPhone Safari không có toàn màn hình cho trang web** → nút báo "Chia sẻ ▸ Thêm vào MH chính", thẻ hướng dẫn hiện một lần
+  (`localStorage matu.iosFullscreenHint`). Template có `manifest.webmanifest` (`display: fullscreen`, ngang, icon 192/512 cắt từ
+  `Art/AppIcon/app_icon.png`) + `apple-mobile-web-app-capable`, nên mở từ màn hình chính là không có thanh trình duyệt; khi đó nút ẩn.
+  Trong Editor nút chỉ hiện với `WebFullscreen.PreviewInEditor = true`. Nhánh `#if UNITY_WEBGL` kiểm bằng
+  `DEFINES="UNITY_WEBGL" Tools/compile_check.sh`.
 
 ## Node.js
 

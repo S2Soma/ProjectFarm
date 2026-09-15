@@ -294,6 +294,55 @@ namespace LQFarm
             _coin.resizeTextMinSize = 15;
             _coin.resizeTextMaxSize = 24;
 
+            if (WebFullscreen.Offered) BuildFullscreenChip(app, cluster);
+
+        }
+
+        // ------------------------------------------------------------
+        // web build: full screen
+        // ------------------------------------------------------------
+        Image _fullscreenIcon;
+        bool _fullscreenShown;
+
+        /// <summary>A round glass chip just left of the wallet, only on the web build. The menu
+        /// header had no room left (account pill + sound + music fill its 192 px), and on a phone
+        /// browser full screen is the first thing a player wants, not something to dig for.</summary>
+        void BuildFullscreenChip(GameApp app, RectTransform wallet)
+        {
+            var chip = UIKit.Node("fullscreen", wallet);
+            chip.Anchor(UIKit.TopLeft, new Vector2(-56f, -3f), new Vector2(46f, 46f));
+            var bg = SurfaceLook.Add(chip, Looks.Glass, SurfaceLook.Pill).Fill;
+            bg.raycastTarget = true;
+            _fullscreenIcon = UIKit.Img(chip, Art.Load("Art/gen/fullscreen_on"), Color.white, "ic");
+            _fullscreenIcon.preserveAspect = true;
+            _fullscreenIcon.raycastTarget = false;
+            _fullscreenIcon.rectTransform.Anchor(UIKit.Center, Vector2.zero, new Vector2(24f, 24f));
+            var b = chip.gameObject.AddComponent<Button>();
+            b.targetGraphic = bg;
+            b.transition = Selectable.Transition.None;
+            b.onClick.AddListener(() =>
+            {
+                Sfx.Play(SfxId.Toggle);
+                if (!WebFullscreen.Available)
+                {
+                    // iPhone Safari: a page cannot go full screen, an icon on the home screen can
+                    app.Toast("Trên iPhone: chạm Chia sẻ ▸ Thêm vào MH chính để chơi toàn màn hình");
+                    return;
+                }
+                WebFullscreen.Toggle();
+                // the browser answers asynchronously; Render (once a second) catches up after that
+                SetFullscreenIcon(!WebFullscreen.IsOn);
+            });
+            chip.gameObject.AddComponent<PressFx>();
+            _fullscreenShown = false;
+            SetFullscreenIcon(WebFullscreen.IsOn);
+        }
+
+        void SetFullscreenIcon(bool on)
+        {
+            if (_fullscreenIcon == null || (_fullscreenShown == on && _fullscreenIcon.sprite != null)) return;
+            _fullscreenShown = on;
+            _fullscreenIcon.sprite = Art.Load(on ? "Art/gen/fullscreen_off" : "Art/gen/fullscreen_on");
         }
 
         // ------------------------------------------------------------
@@ -1006,6 +1055,8 @@ namespace LQFarm
             RenderWeather();
             RenderActions();
             RenderDots(owned);
+            // Esc, the Android back gesture or the browser's own bar can leave full screen at any time
+            if (_fullscreenIcon != null) SetFullscreenIcon(WebFullscreen.IsOn);
         }
     }
 }
