@@ -43,7 +43,7 @@ namespace LQFarm
             var disc = UIKit.Node("avatar", who);
             disc.Anchor(UIKit.Left, new Vector2(12, 0), new Vector2(70, 70));
             SurfaceLook.Add(disc, Looks.BtnCream, SurfaceLook.Pill);
-            string pet = string.IsNullOrEmpty(GS.Local.petActive) ? "mit" : GS.Local.petActive;
+            string pet = string.IsNullOrEmpty(GS.Local.petActive) ? "shushi" : GS.Local.petActive;
             var face = UIKit.Img(disc, Art.Load("Art/pets/" + pet + "/portrait") ?? Art.Load("Art/gen/account"), Color.white, "pet");
             face.preserveAspect = true;
             face.rectTransform.Stretch(6, 6, 6, 8);

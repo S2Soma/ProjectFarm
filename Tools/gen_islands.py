@@ -230,6 +230,13 @@ def build(index, th):
     # 50%-transparent hole in it — every grass tuft showed the sea through.
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
+    # The light in the painting, for island_N_glow.png (MiT/UI Glow animates it): emit is the steady
+    # light that pulses, spark is where glints and twinkles may appear.
+    emit = Image.new("RGB", (W, H), (0, 0, 0))
+    ed = ImageDraw.Draw(emit)
+    spark = Image.new("L", (W, H), 0)
+    sd = ImageDraw.Draw(spark)
+    spark_top = 0.0
 
     def on_top(x, y, pad=0.02):
         u, v = grid_of(x, y)
@@ -322,6 +329,8 @@ def build(index, th):
             h_ = rng.uniform(16, 34)
             draw.polygon([(cx_, cy_ - h_), (cx_ + h_ * 0.35, cy_), (cx_, cy_ + h_ * 0.4), (cx_ - h_ * 0.35, cy_)],
                          fill=(150, 214, 255, 230))
+            ed.polygon([(cx_, cy_ - h_), (cx_ + h_ * 0.35, cy_), (cx_, cy_ + h_ * 0.4), (cx_ - h_ * 0.35, cy_)], fill=(40, 80, 110))
+            sd.polygon([(cx_, cy_ - h_), (cx_ + h_ * 0.35, cy_), (cx_, cy_ + h_ * 0.4), (cx_ - h_ * 0.35, cy_)], fill=255)
             draw.line([cx_, cy_ - h_, cx_, cy_ + h_ * 0.4], fill=(235, 250, 255, 230), width=2)
         for _ in range(160):
             fx, fy = rng.uniform(CX - RX, CX + RX), rng.uniform(CY - RY, CY + RY)
@@ -329,6 +338,7 @@ def build(index, th):
             r = rng.uniform(1.5, 3.2)
             draw.ellipse([fx - r, fy - r, fx + r, fy + r], fill=(255, 255, 255, 255))
         rocks = ("#8FA8BE", "#C6D8E8")
+        spark_top = 0.5
     elif key == "fire":
         glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         gd = ImageDraw.Draw(glow)
@@ -347,6 +357,8 @@ def build(index, th):
                 gd.line(pts, fill=(255, 120, 30, 255), width=16, joint="curve")
                 draw.line(pts, fill=(255, 150, 50, 255), width=7, joint="curve")
                 draw.line(pts, fill=(255, 226, 140, 255), width=3, joint="curve")
+                ed.line(pts, fill=(200, 80, 18), width=12, joint="curve")
+                ed.line(pts, fill=(255, 190, 90), width=4, joint="curve")
         for _ in range(22):
             fx, fy = rng.uniform(CX - RX, CX + RX), rng.uniform(CY - RY, CY + RY)
             if not on_top(fx, fy, 0.05): continue
@@ -354,8 +366,54 @@ def build(index, th):
             for _ in range(3):
                 fx += rng.uniform(-18, 18); fy += rng.uniform(-8, 8)
                 pts.append((fx, fy))
-            gd.line(pts, fill=(255, 110, 30, 200), width=7)
-            draw.line(pts, fill=(255, 176, 70, 230), width=2)
+            # hairline cracks between the fissures: dark, with only a thread of heat in them
+            gd.line(pts, fill=(255, 110, 30, 70), width=5)
+            draw.line(pts, fill=(52, 34, 28, 230), width=3)
+            draw.line(pts, fill=(255, 150, 60, 180), width=1)
+            ed.line(pts, fill=(110, 46, 12), width=3)
+        # Fissures in the yard, where they can be seen between the beds and the fence: long, jagged,
+        # forking seams with scorched lips and a hot core, which IslandLife makes breathe. Their own rng,
+        # so the rest of the painting stays as it was.
+        yr = random.Random(th["seed"] + 900)
+        scorch = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        sdraw = ImageDraw.Draw(scorch)
+        cracks = []
+        for _ in range(15):
+            u_ = yr.uniform(-2.45, 2.45)
+            v_ = yr.choice((-1, 1)) * yr.uniform(2.15, 2.5)
+            if yr.random() < 0.5:
+                u_, v_ = v_, u_
+            if abs(u_ + v_) < 1.2 and abs(u_ - v_) > 3.4:      # keep the gates clear
+                continue
+            px, py = CX + (u_ - v_) * STEP_X / K, IY0 + (u_ + v_) * STEP_Y / K
+            ang = yr.uniform(0, math.tau)
+            main = [(px, py)]
+            for _ in range(yr.randint(6, 9)):
+                ang += yr.uniform(-0.5, 0.5)
+                px += math.cos(ang) * yr.uniform(16, 26); py += math.sin(ang) * yr.uniform(8, 13)
+                main.append((px, py))
+            cracks.append((main, 1.0))
+            for _ in range(yr.randint(1, 2)):
+                bx, by = main[yr.randint(1, len(main) - 2)]
+                ba = ang + yr.choice((-1, 1)) * yr.uniform(0.8, 1.4)
+                br = [(bx, by)]
+                for _ in range(yr.randint(2, 4)):
+                    ba += yr.uniform(-0.5, 0.5)
+                    bx += math.cos(ba) * yr.uniform(12, 18); by += math.sin(ba) * yr.uniform(6, 9)
+                    br.append((bx, by))
+                cracks.append((br, 0.6))
+        for pts, wk in cracks:
+            sdraw.line(pts, fill=(34, 20, 16, 135), width=int(30 * wk), joint="curve")
+        scorch = scorch.filter(ImageFilter.GaussianBlur(7))
+        img = Image.alpha_composite(img, scorch)
+        draw = ImageDraw.Draw(img)
+        for pts, wk in cracks:
+            gd.line(pts, fill=(255, 96, 22, 200), width=int(22 * wk), joint="curve")
+            draw.line(pts, fill=(30, 18, 16, 255), width=max(4, int(11 * wk)), joint="curve")
+            draw.line(pts, fill=(236, 100, 30, 255), width=max(2, int(6 * wk)), joint="curve")
+            draw.line(pts, fill=(255, 196, 90, 255), width=max(1, int(3 * wk)), joint="curve")
+            ed.line(pts, fill=(230, 96, 22), width=int(14 * wk), joint="curve")
+            ed.line(pts, fill=(255, 210, 120), width=max(1, int(4 * wk)), joint="curve")
         glow = glow.filter(ImageFilter.GaussianBlur(7))
         img = Image.alpha_composite(glow, img)
         draw = ImageDraw.Draw(img)
@@ -373,6 +431,8 @@ def build(index, th):
             gd.polygon(poly, fill=(90, 240, 255, 170))
             draw.polygon(poly, fill=(150, 240, 255, 245))
             draw.line([poly[0], poly[2]], fill=(235, 255, 255, 255), width=2)
+            ed.polygon(poly, fill=(60, 190, 230))
+            sd.polygon(poly, fill=255)
         glow = glow.filter(ImageFilter.GaussianBlur(9))
         img = Image.alpha_composite(glow, img)
         draw = ImageDraw.Draw(img)
@@ -489,6 +549,8 @@ def build(index, th):
             r = rng.uniform(5, 11)
             draw.ellipse([cx_ - r, cy_ - r * 0.8, cx_ + r, cy_ + r * 0.8], fill=(246, 196, 64, 255))
             draw.ellipse([cx_ - r * 0.5, cy_ - r * 0.6, cx_ + r * 0.1, cy_ - r * 0.1], fill=(255, 244, 190, 255))
+            ed.ellipse([cx_ - r, cy_ - r * 0.8, cx_ + r, cy_ + r * 0.8], fill=(70, 48, 8))
+            sd.ellipse([cx_ - r, cy_ - r * 0.8, cx_ + r, cy_ + r * 0.8], fill=255)
         for _ in range(140):
             fx, fy = rng.uniform(CX - RX, CX + RX), rng.uniform(CY - RY, CY + RY)
             if not on_top(fx, fy, 0.03): continue
@@ -496,6 +558,7 @@ def build(index, th):
             draw.line([fx - r, fy, fx + r, fy], fill=(255, 250, 220, 230), width=1)
             draw.line([fx, fy - r, fx, fy + r], fill=(255, 250, 220, 230), width=1)
         rocks = ("#D6A868", "#F0CC96")
+        spark_top = 0.45          # twinkles on the ground; the glint stays on the nuggets (a > 0.6)
 
     # rocks embedded in the cliff face, lit from the top-left
     for _ in range(26):
@@ -517,14 +580,155 @@ def build(index, th):
         img = Image.alpha_composite(img, fall)
     img.save(os.path.join(OUT, f"island_{index}.png"))
 
-    # snow cover for snowy hours, following this island's top
-    lum = (0.3 * topc[..., 0] + 0.59 * topc[..., 1] + 0.11 * topc[..., 2]) / 255.0
-    lit = np.clip((lum - 0.25) / 0.6, 0, 1)[..., None]
-    snowc = hexc("#B4C6E0") * (1 - lit) + hexc("#FBFDFF") * lit
-    sa = top_a * (0.82 + 0.18 * noise((H, W), 18, th["seed"] + 9)) * (1 - river)
-    Image.fromarray(np.dstack([np.clip(snowc, 0, 255), np.clip(sa * 255, 0, 255)]).astype(np.uint8), "RGBA") \
-        .save(os.path.join(OUT, f"island_{index}_snow.png"))
+    if key in ("fire", "storm", "gold", "ice"):
+        e = np.asarray(emit, np.float32)
+        e = e * 0.55 + np.asarray(emit.filter(ImageFilter.GaussianBlur(6)), np.float32) * 0.9
+        e = e * sil[..., None]
+        a = np.maximum(np.asarray(spark, np.float32) / 255.0, top_a * spark_top) * sil
+        glow_img = Image.fromarray(np.dstack([np.clip(e, 0, 255), np.clip(a * 255, 0, 255)]).astype(np.uint8), "RGBA")
+        glow_img.resize((W // 2, H // 2), Image.LANCZOS).save(os.path.join(OUT, f"island_{index}_glow.png"))
+
+    paint_snow(index, th, dict(gu=gu, gv=gv, sdf=sdf, top_a=top_a, river=river, dy=dy, xs=xs, ys=ys,
+                               y_edge=y_edge, y_bot=y_bot, has=has, cliff_a=cliff_a, v=v, strata=s,
+                               mouth=mouth_range if key == "water" else None))
     return img
+
+
+def blurf(a, r):
+    """Gaussian blur of a float field (separable, no 8-bit quantisation)."""
+    n = int(math.ceil(r * 3))
+    k = np.exp(-0.5 * (np.arange(-n, n + 1, dtype=np.float32) / r) ** 2)
+    k /= k.sum()
+    p = np.pad(a, ((0, 0), (n, n)), mode="edge")
+    t = sum(k[i] * p[:, i:i + a.shape[1]] for i in range(2 * n + 1))
+    p = np.pad(t, ((n, n), (0, 0)), mode="edge")
+    return sum(k[i] * p[i:i + a.shape[0]] for i in range(2 * n + 1)).astype(np.float32)
+
+
+def paint_snow(index, th, f):
+    """island_N_snow.png: snow LYING on this island, painted opaque where there is snow and
+    clear where there is not. The game fades it with the weather (alpha = snow amount) and tints
+    it with the hour's light — it is never a semi-transparent wash.
+
+      * depth is a field: a base cover, drifts piled at the rim and against the fence line,
+        thinning at the field's edge, broken by large noise into patches where grass shows;
+      * shaded by that depth as a height field, lit from the top-left: bright white, soft
+        blue-lavender in the hollows and along every thinning edge;
+      * a cornice rolls over the front lip with a few icicles, snow sits on cliff ledges;
+      * the river stays open water with an ice shelf along both banks.
+    """
+    gu, gv, sdf, top_a, river = f["gu"], f["gv"], f["sdf"], f["top_a"], f["river"]
+    y_edge, y_bot, has, cliff_a = f["y_edge"], f["y_bot"], f["has"], f["cliff_a"]
+    seed = th["seed"]
+    rng = random.Random(seed + 505)
+    cheb = np.maximum(np.abs(gu), np.abs(gv))
+    inside = -sdf
+
+    n_big = noise((H, W), 90, seed + 21)
+    n_patch = noise((H, W), 34, seed + 24)
+    n_mid = noise((H, W), 22, seed + 22)
+    n_fine = noise((H, W), 5, seed + 23)
+    depth = 0.56 + np.zeros((H, W), np.float32)
+    depth += 0.55 * np.exp(-(inside / 0.14) ** 2)                 # built up at the rim
+    depth += 0.34 * np.exp(-((cheb - 2.86) / 0.10) ** 2)          # drift outside the fence
+    depth += 0.34 * np.exp(-((cheb - 2.60) / 0.08) ** 2)          # drift banked against the fence
+    depth -= 0.22 * np.exp(-((cheb - 2.10) / 0.12) ** 2)          # the worked field's edge melts first
+    depth += (n_big - 0.5) * 0.55 + (n_patch - 0.5) * 0.95 + (n_fine - 0.5) * 0.05
+
+    T = 0.28
+    gyd, gxd = np.gradient(depth)
+    grad = np.hypot(gxd, gyd) + 1e-5
+    cov = np.clip((depth - T) / grad * 0.7 + 0.5, 0, 1)
+    thin = np.clip((depth - T) / (grad * 7.0), 0, 1)              # 0 at a snow edge, 1 a few px in
+
+    # height-field light: top-left sun
+    # smooth, broad undulation only: fine bumps read as quilting, not as snow
+    hgt = blurf(np.clip(depth - T, 0, 0.45), 9.0)
+    hy, hx = np.gradient(hgt)
+    lightk = np.clip(0.66 + (hx * 0.7 + hy * 1.0) * 38.0, 0, 1)
+    c_hollow, c_mid, c_lit = hexc("#A7B1DC"), hexc("#DCE4F4"), hexc("#FAFCFF")
+    col = mix(c_hollow, c_mid, np.clip(lightk * 1.8, 0, 1))
+    col = mix(col, c_lit, np.clip(lightk * 2.2 - 1.2, 0, 1))
+    col = mix(col, hexc("#B3BCE4"), (1 - thin) * 0.6)             # thinning edges go lavender
+    col = col * (0.988 + 0.024 * n_fine[..., None])
+    edge = np.clip(inside / 0.16, 0, 1)
+    front = f["dy"] >= 0.15
+    col = np.where((front & (edge < 1))[..., None], mix(col, hexc("#C3CBEA"), (1 - edge) * 0.55), col)
+
+    # the river stays open; its banks freeze into a shelf
+    river_open = np.clip(blurf(river, 2.0) * 1.6, 0, 1)
+    top_snow = cov * top_a * (1 - river_open)
+    ice = np.zeros((H, W), np.float32)
+    if index == 6:
+        meander = 0.05 * np.sin(gu * 1.7 + 0.6) + 0.02 * np.sin(gu * 4.3)
+        half = RIVER_HALF - 0.06
+        from_bank = half - np.abs(gv - meander)                    # cells from the bank, inside the band
+        spring_in = 0.62 - np.hypot(gu - SPRING_U, gv * 1.05)
+        d_in = np.where(gu > SPRING_U, np.maximum(from_bank, spring_in), spring_in)
+        wob = 0.035 + 0.03 * n_mid
+        ice = river * np.clip((wob - d_in) * PX_PER_CELL * 0.7 + 0.5, 0, 1)
+    ice_col = mix(hexc("#EAF6FF"), hexc("#A8DDF2"), np.clip(1 - ice, 0, 1))
+
+    # sparse glints on lit snow
+    sp = np.zeros((H, W), np.float32)
+    for _ in range(900):
+        x, y = rng.randrange(W), rng.randrange(H)
+        if top_snow[y, x] > 0.9 and lightk[y, x] > 0.5:
+            sp[y, x] = 1.0
+    sp = np.clip(blurf(sp, 0.7) * 4.0, 0, 1)
+    col = mix(col, hexc("#FFFFFF"), sp)
+
+    # Grass showing through snow is wet and in shadow, not the lawn's full summer green: a thin
+    # cool film over the holes, and a soft blue shadow just inside each snow edge.
+    hole = top_a * (1 - cov) * (1 - river_open)
+    near = np.clip(blurf(cov, 3.0) * 1.8, 0, 1) * hole
+    film = hole * (0.58 + 0.24 * near)
+    film_col = mix(hexc("#566B58"), hexc("#8390BC"), near)
+    alpha = np.maximum(top_snow, ice)
+    col = np.where((ice > top_snow)[..., None], ice_col, col)
+    col = np.where((alpha < 0.5)[..., None], film_col, col)
+    alpha = np.maximum(alpha, film * (1 - alpha))
+
+    # ---- the cornice over the front lip, icicles, cliff ledges ----
+    img = Image.fromarray(np.dstack([np.clip(col, 0, 255), np.clip(alpha * 255, 0, 255)]).astype(np.uint8))
+    lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(lay)
+    mouth = f["mouth"]
+    prof = noise((1, W), 26, seed + 31)[0]
+    prof2 = noise((1, W), 7, seed + 32)[0]
+    xs_ = np.arange(W)
+    for x in range(W):
+        if not has[x]:
+            continue
+        if mouth is not None and mouth[0] - 8 <= x <= mouth[1] + 8:
+            continue
+        ye = y_edge[x]
+        side = abs(x - CX) / RX
+        L = (7.0 + 10.0 * prof[x] + 3.0 * prof2[x]) * (1.0 - 0.55 * side ** 3)
+        ld.line([(x, ye - 3), (x, ye + L)], fill=(228, 235, 248, 255))
+        ld.point((x, ye + L + 1), fill=(150, 160, 205, 255))
+    # icicles
+    x = int(CX - RX * 0.92)
+    while x < CX + RX * 0.92:
+        if has[x] and not (mouth is not None and mouth[0] - 14 <= x <= mouth[1] + 14):
+            ye = y_edge[x] + (7.0 + 10.0 * prof[x]) * 0.85
+            Lc = rng.uniform(9, 26) * (1 - abs(x - CX) / RX * 0.5)
+            wc = rng.uniform(2.6, 4.4)
+            ld.polygon([(x - wc, ye), (x + wc, ye), (x + rng.uniform(-1, 1), ye + Lc)], fill=(206, 226, 248, 240))
+            ld.line([(x - wc * 0.3, ye + 1), (x, ye + Lc * 0.75)], fill=(255, 255, 255, 230), width=1)
+        x += int(rng.uniform(26, 90))
+    lay_a = np.asarray(lay).astype(np.float32)
+    # shade the cornice: light on top, lavender toward its lower edge
+    rows = np.arange(H, dtype=np.float32)[:, None]
+    tcor = np.clip((rows - y_edge[None, :]) / 18.0, 0, 1)
+    shade = mix(hexc("#EEF2FB"), hexc("#AEB7DF"), tcor)
+    iscor = (lay_a[..., 3] > 0) & (lay_a[..., 0] > 220) & (lay_a[..., 2] > 240)
+    lay_a[..., :3] = np.where(iscor[..., None], shade, lay_a[..., :3])
+
+    # (no snow on the cliff's ledges: thin white strata lines read as scratches on the rock)
+
+    out = Image.alpha_composite(img, Image.fromarray(lay_a.astype(np.uint8)))
+    out.save(os.path.join(OUT, f"island_{index}_snow.png"))
 
 
 if __name__ == "__main__":

@@ -711,6 +711,33 @@ namespace LQFarm
             return null;
         }
 
+        /// <summary>Rewards ready to claim on each tab of the missions board — the red dots on the
+        /// mission strip, on the board's tabs and on the menu. Every chapter's tasks count, not only
+        /// the active one: progress is tracked for all of them, and any can be claimed.</summary>
+        public int ClaimableContracts()
+        {
+            int n = 0;
+            foreach (var m in contracts) if (!m.Empty && !m.claimed && m.p >= m.need) n++;
+            return n;
+        }
+
+        public int ClaimableStory()
+        {
+            int n = 0;
+            foreach (var ch in GameData.Chapters)
+                foreach (var t in ch.tasks) { var pr = Progress(t, false); if (!pr.claimed && pr.p >= t.need) n++; }
+            return n;
+        }
+
+        public int ClaimableDaily()
+        {
+            int n = 0;
+            foreach (var t in GameData.Daily) { var pr = Progress(t, true); if (!pr.claimed && pr.p >= t.need) n++; }
+            return n;
+        }
+
+        public int ClaimableMissions => ClaimableContracts() + ClaimableStory() + ClaimableDaily();
+
         // ================================================================
         // contracts
         // ================================================================

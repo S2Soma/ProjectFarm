@@ -1,4 +1,9 @@
-"""Every UI and farm sound effect, synthesised from nothing: no samples, so no licence to track.
+"""The synthesised UI and farm sound effects: no samples, so no licence to track.
+
+Since 2026-09-15 (second round) the sounds that answer a touch — tap, tab, toggle, menu_open/close,
+panel_open/close, harvest_0/1, plant_0/1 — come from Tools/make_press_sfx.py instead: recorded mouth pops
+(CC0), because the owner still heard these struck sine notes as piercing. That script imports the building
+blocks, loudness and master() from here. The ladder below still lists them, at their new rungs.
 
     uv run --with numpy --with scipy --with soundfile python Tools/gen_sfx.py
     uv run --with numpy --with scipy --with soundfile --with matplotlib python Tools/gen_sfx.py --preview sheet.png
@@ -28,15 +33,16 @@ near-uniform volumes: frequent touches are the quietest and shortest, the three 
 island, legendary) the loudest.
 
     level clip                          level clip
-    -27   tap                           -21   harvest_0/1
-    -26   tab                           -22   error (soft, never a buzzer)
-    -24   toggle, menu_close,           -20   coins
-          panel_close, plank_0..2       -19   claim
-    -23   menu_open, panel_open         -18   mutation
-    -22   plant_0/1, water              -17   chest_open
-                                        -15   level_up, legendary (peak-capped near -17;
+    -30   tap *                         -23   harvest_0/1 *
+    -29   tab *                         -22   error (soft, never a buzzer)
+    -27   toggle, menu_close,           -20   coins
+          panel_close *                 -19   claim
+    -26   menu_open, panel_open *       -18   mutation
+    -24   plank_0..2; plant_0/1 *       -17   chest_open
+    -22   water                         -15   level_up, legendary (peak-capped near -17;
                                               Sfx.Table gives it a little more volume)
                                         -14   island_unlock
+    * written by Tools/make_press_sfx.py
 
 The printout (and --preview) lists each clip's length, decoded peak, level, full-range and phone L100,
 and its energy above 6 and 8 kHz relative to the whole clip.
@@ -306,94 +312,6 @@ def master(y, target, lp=6500, fade_out=0.03):
 N = hz
 
 
-def clip_tap(rng):
-    # a felt tap on a small bar: "pok"
-    y = canvas(0.09)
-    place(y, marimba(N("Eb5"), 0.09, decay=0.032, bright=0.6, mallet=0.06, rng=rng), 0)
-    place(y, partials(N("Eb4"), 0.09, [(1, 1, 0.028)]), 0, 0.35)
-    return master(y, -27, lp=4000, fade_out=0.02)
-
-
-def clip_tab(rng):
-    y = canvas(0.11)
-    place(y, kalimba(N("Ab5"), 0.11, decay=0.045), 0)
-    place(y, marimba(N("Ab4"), 0.11, decay=0.03, bright=0.3, mallet=0.03, rng=rng), 0, 0.25)
-    return master(y, -26, lp=4500, fade_out=0.025)
-
-
-def clip_toggle(rng):
-    y = canvas(0.2)
-    place(y, marimba(N("Eb5"), 0.2, decay=0.045, bright=0.7, mallet=0.04, rng=rng), 0, 0.8)
-    place(y, marimba(N("Ab5"), 0.2, decay=0.07, bright=0.7, mallet=0.04, rng=rng), 0.055)
-    return master(y, -24, lp=5000, fade_out=0.04)
-
-
-def clip_menu_open(rng):
-    y = canvas(0.26)
-    place(y, bubble(N("Eb5"), N("Ab5"), 0.2, glide=0.06, decay=0.05), 0, 0.5)
-    place(y, kalimba(N("Ab5"), 0.22, decay=0.08), 0.045)
-    place(y, kalimba(N("Eb6"), 0.22, decay=0.05), 0.045, 0.12)
-    return master(space(y, 0.10, 0.35), -23, lp=5000, fade_out=0.05)
-
-
-def clip_menu_close(rng):
-    y = canvas(0.24)
-    place(y, bubble(N("Ab5"), N("Eb5"), 0.2, glide=0.06, decay=0.05), 0, 0.5)
-    place(y, kalimba(N("Eb5"), 0.2, decay=0.07), 0.045)
-    return master(space(y, 0.10, 0.35), -24, lp=4500, fade_out=0.05)
-
-
-def clip_panel_open(rng):
-    y = canvas(0.32)
-    place(y, swish(rng, 0.2, 700, 1900, peak_at=0.06, decay=0.05), 0, 0.34)
-    place(y, marimba(N("Eb5"), 0.28, decay=0.13, bright=0.6, mallet=0.03, rng=rng), 0.04)
-    place(y, marimba(N("Ab5"), 0.28, decay=0.11, bright=0.6, mallet=0.0), 0.04, 0.55)
-    return master(space(y, 0.12, 0.4), -23, lp=4500, fade_out=0.06)
-
-
-def clip_panel_close(rng):
-    y = canvas(0.28)
-    place(y, swish(rng, 0.16, 1700, 650, peak_at=0.04, decay=0.04), 0, 0.30)
-    place(y, marimba(N("Ab5"), 0.2, decay=0.06, bright=0.5, mallet=0.03, rng=rng), 0.02, 0.55)
-    place(y, marimba(N("Eb5"), 0.22, decay=0.09, bright=0.5, mallet=0.02, rng=rng), 0.075)
-    return master(space(y, 0.10, 0.35), -24, lp=4200, fade_out=0.06)
-
-
-def _harvest(rng, note, pop_from, pop_to):
-    # the crop comes out of the soil with a soft pop, the leaves brush, a wooden note says "yours"
-    y = canvas(0.28)
-    place(y, bubble(pop_from, pop_to, 0.06, glide=0.022, decay=0.022), 0, 0.45)
-    place(y, marimba(N(note), 0.26, decay=0.12, bright=0.8, mallet=0.03, rng=rng), 0.012, 0.85)
-    place(y, partials(2 * N(note), 0.2, [(1, 1, 0.07)]), 0.012, 0.24)
-    place(y, grains(rng, 0.09, 7, 1100, 3600, length=(0.006, 0.016), decay=0.05), 0, 0.10)
-    return master(y, -21, lp=5000, fade_out=0.05)
-
-
-def clip_harvest_0(rng):
-    return _harvest(rng, "C5", 380, 950)
-
-
-def clip_harvest_1(rng):
-    return _harvest(rng, "Eb5", 420, 1050)
-
-
-def _plant(rng, note, thump_from):
-    # a seed pressed into soft soil: a low pat, a crumble, a tiny tine
-    y = canvas(0.24)
-    place(y, bubble(thump_from, thump_from * 0.47, 0.12, glide=0.05, decay=0.045, attack=0.004), 0, 0.9)
-    place(y, grains(rng, 0.09, 8, 450, 2200, length=(0.008, 0.02), decay=0.05), 0.004, 0.30)
-    place(y, kalimba(N(note), 0.2, decay=0.08), 0.022, 0.5)
-    return master(y, -22, lp=3500, fade_out=0.05)
-
-
-def clip_plant_0(rng):
-    return _plant(rng, "F5", 210)
-
-
-def clip_plant_1(rng):
-    return _plant(rng, "Ab5", 230)
-
-
 def clip_water(rng):
     # a watering can: droplets (rising bubbles that come to rest on the scale) over a soft shower
     y = canvas(0.44)
@@ -530,9 +448,10 @@ def clip_legendary(rng):
     return master(space(y, 0.3, 1.2), -15, lp=6000, fade_out=0.35)
 
 
+# tap, tab, toggle, menu_open/close, panel_open/close, harvest_0/1 and plant_0/1 are Tools/make_press_sfx.py's
+# (recorded mouth pops, 2026-09-15): do not add them back here, this script would overwrite them.
 CLIPS = [
-    "tap", "tab", "toggle", "menu_open", "menu_close", "panel_open", "panel_close",
-    "harvest_0", "harvest_1", "plant_0", "plant_1", "water", "coins", "error", "claim",
+    "water", "coins", "error", "claim",
     "mutation", "chest_open", "plank_0", "plank_1", "plank_2", "level_up", "island_unlock", "legendary",
 ]
 

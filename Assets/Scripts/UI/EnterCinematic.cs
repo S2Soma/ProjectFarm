@@ -89,6 +89,7 @@ namespace LQFarm
         // ---- the start screen as it was ----
         CanvasGroup _cardGroup, _logoGroup;
         Vector2 _cardBase, _logoBase, _island, _nearBase;
+        float _logoScale = 1f;
         Vector2 _cardCentre, _cardHalf, _logoCentre, _logoHalf;
         Color _haloColor, _raysColor;
         Vector3 _sunScale;
@@ -163,6 +164,7 @@ namespace LQFarm
             _logoGroup = GroupOn(_s.logo);
             _cardBase = _s.card.anchoredPosition;
             _logoBase = _s.logo.anchoredPosition;
+            _logoScale = _s.logo.localScale.x;               // below 1 when the start screen shrank it to clear the card
             RectIn(_s.card, out _cardCentre, out _cardHalf);
             RectIn(_s.logo, out _logoCentre, out _logoHalf);
             _haloColor = _s.halo.color;
@@ -600,7 +602,7 @@ namespace LQFarm
             // the logo lifts away up out of frame as the camera tilts down into the island
             float lu = Clamp01((v - 0.02f) / 0.46f);
             _s.logo.anchoredPosition = _logoBase + new Vector2(0f, 190f * EaseInCubic(lu));
-            float ls = 1f + 0.07f * EaseInQuad(lu);
+            float ls = _logoScale * (1f + 0.07f * EaseInQuad(lu));
             _s.logo.localScale = new Vector3(ls, ls, 1f);
             _logoGroup.alpha = 1f - Smooth(0.45f, 1f, lu);
             if (_s.version != null) SetColor(_s.version, _s.version.color.Alpha(1f - Clamp01(v / 0.2f)));

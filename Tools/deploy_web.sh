@@ -30,7 +30,7 @@ cd "$TMP"
 git init -q
 git checkout -q -b gh-pages
 git add -A
-git -c user.name="$AUTHOR_NAME" -c user.email="$AUTHOR_EMAIL" commit -q -m "Deploy MATU Farm web build ($STAMP)
+git -c user.name="$AUTHOR_NAME" -c user.email="$AUTHOR_EMAIL" commit -q -m "Deploy MATU FArM web build ($STAMP)
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 git remote add origin "$REMOTE"

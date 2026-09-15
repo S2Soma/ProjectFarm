@@ -191,6 +191,30 @@ namespace LQFarm
             return cell;
         }
 
+        /// <summary>The thirsty bed as the farm draws it: the blue rim over the bed art and the water drop standing at the
+        /// front-left of where the crop would be (IslandView.ThirstFoot). Only the picture: the animation is the farm's.</summary>
+        static void Thirsty(RectTransform tile, float w, float artH)
+        {
+            var rim = UIKit.Img(tile, Art.Load("Art/beds/bed_glow_thirst"), Color.white, "rim");
+            rim.preserveAspect = true;
+            rim.raycastTarget = false;
+            rim.rectTransform.Anchor(UIKit.Top, new Vector2(0, -8), new Vector2(w - 16, artH));
+            // the bed art is 780 x 640 with its diamond 760 px wide: plot units → this picture's pixels
+            float disp = Mathf.Min(w - 16, artH * 780f / 640f) / 780f;       // UI px per bed-art px
+            float dh = 640f * disp;
+            float scale = disp * 760f / IslandView.TW;                         // UI px per plot unit
+            float cy = -8f - (artH - dh) * 0.5f - dh * (1f - 0.475f);          // the diamond's centre line
+            var foot = new Vector2(IslandView.ThirstFoot.x * scale, cy + IslandView.ThirstFoot.y * scale);
+            var drop = UIKit.Img(tile, Art.Load("Art/beds/thirst_drop"), Color.white, "drop");
+            drop.preserveAspect = true;
+            drop.raycastTarget = false;
+            float d = Mathf.Max(26f, IslandView.ThirstCellUnits * scale);
+            drop.rectTransform.anchorMin = drop.rectTransform.anchorMax = new Vector2(0.5f, 1f);
+            drop.rectTransform.pivot = new Vector2(0.5f, 0.05f);
+            drop.rectTransform.sizeDelta = new Vector2(d, d);
+            drop.rectTransform.anchoredPosition = foot;
+        }
+
         static void Arrow(RectTransform parent, float x, float y)
         {
             var a = UIKit.Img(parent, Theme.Skin.ArrowRight, Theme.Hex("#B39873"), "arrow");
@@ -221,14 +245,15 @@ namespace LQFarm
             var steps = new (Sprite art, string cap, string sub)[]
             {
                 (Art.Bed("empty", 0),   "Gieo",       "Chạm ô đất trống, chọn hạt giống"),
-                (Art.Bed("thirsty", 1), "Tưới",       "Ô nứt nẻ viền xanh là cây khát"),
+                (Art.Bed("thirsty", 1), "Tưới",       "Ô có giọt nước là cây khát"),
                 (Art.Icon("carrot", 0), "Thu hoạch",  "Viền vàng lấp lánh là đã chín"),
                 (Theme.Skin.Coin,       "Bán",        "Menu ▸ Kho ▸ Bán sỉ để lấy xu"),
             };
             for (int i = 0; i < steps.Length; i++)
             {
                 float x = i * (w + 30f);
-                Tile(row, x, w, 208f, steps[i].art, 104f, steps[i].cap, steps[i].sub);
+                var tile = Tile(row, x, w, 208f, steps[i].art, 104f, steps[i].cap, steps[i].sub);
+                if (i == 1) Thirsty(tile, w, 104f);
                 if (i < steps.Length - 1) Arrow(row, x + w + 4f, -92f);
             }
             Para("• Xu dùng để mua hạt giống, mở thêm ô đất và nâng cấp trang trại.\n"
@@ -242,7 +267,7 @@ namespace LQFarm
             Heading("Tưới đúng cữ");
             var row = Block(190f);
             float w = (Width - 2 * 30f) / 3f;
-            Tile(row, 0, w, 190f, Art.Bed("thirsty", 1), 110f, "Đang khát", "Nứt nẻ, viền xanh: chạm để tưới");
+            Thirsty(Tile(row, 0, w, 190f, Art.Bed("thirsty", 1), 110f, "Đang khát", "Có giọt nước: chạm để tưới"), w, 110f);
             Arrow(row, w + 4f, -80f);
             Tile(row, w + 30f, w, 190f, Art.Bed("watered", 1), 110f, "Đã tưới", "Đất sẫm màu, cây chín sớm hơn");
             Arrow(row, 2 * w + 34f, -80f);

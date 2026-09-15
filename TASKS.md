@@ -1,7 +1,55 @@
-# MATU Farm — việc đang làm
+# MATU FArM — việc đang làm
 
+> 2026-09-15 tối: chủ dự án đổi kiểu chữ tên game thành **MATU FArM**.
 > 2026-09-15: đổi tên game từ MiT FArM thành **MATU Farm**. Mã gói giữ `com.mitfarm.game` (APK mới cài đè bản cũ, giữ ván).
 > 2026-09-14: đổi tên game từ LQ Farm thành **MiT FArM**, mã gói `com.mitfarm.game`.
+
+## 🔵 Đợt góp ý 15/9 tối: HUD, popup, màn hình bắt đầu, mây, ô đất, decor, pet, tiếng nhấn
+
+- [x] N1 Chấm đỏ số phần thưởng chờ nhận trên dải nhiệm vụ + từng tab bảng Nhiệm vụ (`PlayerState.Claimable*`)
+- [x] N2 Nút X của mọi bảng nằm trong dải tiêu đề
+- [x] N3 Popup cây: thời gian nằm trong thanh, chỉ còn thời gian ("9p 39s" / "Tưới ngay" / "Đủ nước")
+- [x] N4 Lên cấp liên tục làm HUD trôi xuống mép màn hình → `Tween.Shake` chồng nhau giữ chung vị trí gốc (kiểm 14 lần lên cấp liền: gốc vẫn 0,0)
+- [x] N5 Màn hình bắt đầu: logo căn trên đảo + né thẻ ở 16:9 / 16:10 / 4:3 / 19,5:9 (ảnh `Screenshots/L0_start_*`), bỏ khẩu hiệu
+  "Nông trại trên mây" (cả màn tải web), MiT → Shushi, tên game **MATU FArM**
+- [x] N6 Pet ăn vụng: đã ăn mọi nông sản (món khoái khẩu chỉ ×2 khả năng) — không đổi luật; bảng pet ghi "Ăn vụng mọi nông sản,
+  mê nhất …" thay cho "Mê nhất: …", test kiểm mọi món trong kho đều có lúc bị ăn
+- [x] N7 Mây mềm, có chuyển động: vẽ lại toàn bộ mây (`gen_sky.py`: thùy + chồi, painter mềm, biển mây theo hàng dẹt,
+  cirrus/stratus sợi), xám = ánh sáng → shader `UICloud` tô từ màu bóng tím lam sang màu nắng (hết mây nâu lúc hoàng hôn),
+  mép thở bằng noise, biển mây cuộn + cumulus trôi + đảo xa lắc lư trên GPU (canvas trời hết dựng lại mỗi frame); màn hình
+  bắt đầu dùng chung; menu **Chụp mây** (C00–C39) + **Đo chi phí bầu trời**
+- [ ] N7b **Chủ dự án duyệt** ảnh `Screenshots/C*` (bản đồ 5 giờ × thời tiết, zoom giữa, gần, màn hình bắt đầu)
+- [x] N8 Bỏ thẻ 2 thanh thời gian dưới cây (thời gian nằm trong popup); ô khát có **giọt nước nhảy** trước-trái gốc cây
+  (shader `UIThirst`, không dựng lại canvas: BuildBatch 6,00/frame trước và sau) + viền xanh đậm có vệt sáng chạy + đất nứt rõ
+  hơn; cắt 4 tấm decor của chủ dự án (`Tools/slice_decor.py`, alpha/viền sạch, biến thể nền tuyết/tro/đá/cát, mũ tuyết, đèn
+  đêm), đặt theo chủ đề 8 đảo trong `IslandView.Places`; thay cối xay / chong chóng / pha lê vẽ phẳng bằng tranh; menu **Chụp
+  decor & ô đất** (D00–D86)
+- [ ] N8b **Chủ dự án duyệt** ảnh `Screenshots/D*`; cánh cối xay vẽ tay đã tách ra để quay (mái + đỉnh tháp phía sau là phần
+  dựng lại, hơi nhoè nếu nhìn gần); thông, cột thu lôi, rương, đống xu, miệng núi vẫn là hình vẽ phẳng của `gen_life.py` — cần tấm
+  decor vẽ tay cho Băng/Hoả/Lôi/Vàng (trình duyệt agent chưa đăng nhập ChatGPT/Gemini nên chưa sinh được)
+- [x] N9 Pet chỉ đi trong rào đảo đã mở, qua đảo bằng cầu, không nhảy theo camera — `Farm/PetPaths.cs` (lưới đi được từ
+  rào/luống/sông/prop, A*), pet sống ở một đảo, đi bộ cổng → cầu → cổng, nhảy qua sông Đảo Nước ở một chỗ; ảnh P00–P6x
+- [x] N10 Tiếng nhấn: 7 tiếng nhấn + nốt của gieo/thu hoạch thay bằng tiếng "bóp" thu âm (OpenGameArt "Pop sounds", CC0,
+  `Tools/make_press_sfx.py`); một cú chạm chỉ phát một tiếng nhấn (`Sfx.cs` gộp trong frame); Normalize tắt thật (`m_Normalize`)
+- [ ] N10b **Chủ dự án nghe thử** tiếng nhấn mới (so với bản cũ trong scratchpad `press/before/`)
+- [x] N11 Tìm pet: nút "Tìm {tên}" trong bảng Thú cưng bay camera tới đảo pet đang ở; điểm nhảy sông Đảo Nước lùi khỏi rào trước
+
+## 🔵 Đảo sống: tuyết, sông chảy, sinh cảnh từng đảo (2026-09-15 tối)
+
+- [x] L1 Tuyết thật: `island_N_snow` vẽ đục (đống tuyết ở mép/rào, cỏ lộ ướt, bóng tím lam, gờ tuyết + cột băng, viền băng
+  sông), mũ tuyết cho rào/rơm/biển/cờ/đá/vật riêng (`Tools/gen_snow.py`), sương viền + tuyết rãnh trên luống (`bed_frost`),
+  đất giữ màu sẫm, hoa bị vùi; alpha = lượng tuyết, màu theo giờ (ban đêm ngả lam trăng)
+- [x] L2 Đảo Nước: sông chảy bằng shader (`UIWater`, texcoord = ô lưới), thác (`UIFall`), sương + bụi nước, lá trôi, lau sậy,
+  cá nhảy có vòng gợn, chuồn chuồn
+- [x] L3 Sinh cảnh từng đảo (`Farm/IslandLife.cs`): Vườn Nhà bướm/hải âu/cỏ hoa · Khổng Lồ nấm-hoa-lá khổng lồ, dây leo, ong,
+  cánh hoa · Gió cối xay/chong chóng/cờ/cỏ lúa/hạt bồ công anh · Băng lấp lánh, sương lạnh, cực quang đêm · Hoả khe dung nham
+  thở, khói + tàn lửa · Lôi pha lê nạp điện, tia điện giữa hai cột thu lôi · Vàng vệt sáng + lấp lánh, rương, đống xu
+- [x] L4 Hiệu năng: shader theo `_Time` không làm canvas dựng lại (BuildBatch 11,02/frame bật hay tắt như nhau); sinh vật trên
+  2 canvas lồng mỗi đảo, tắt khi ngoài màn hình/zoom xa/đảo khoá; 8 shader qua GLES3 (Android + WebGL), Vulkan, Metal
+- [x] L5 `IslandTest` kiểm vật riêng + cây đung đưa theo luật sân; 15 bộ kiểm tra xanh; menu **Chụp đảo sống** (I00–I92)
+- [ ] L6 **Chủ dự án duyệt** ảnh `Screenshots/I*` (ngày / tuyết ngày / tuyết đêm / đêm, sông 6 khung, bản đồ)
+- [ ] L7 Thử trên điện thoại tầm trung: FPS khi lướt qua Đảo Nước / Đảo Hoả / Đảo Băng ban đêm (nhiều lớp cộng sáng)
+- [ ] L8 Còn có thể làm: vệt nắng ấm trên Đảo Vàng, lá bèo nhấp nhô, bướm đậu lên hoa thật (hiện đậu tại điểm vòng sân)
 
 ## 🔵 Bản web GitHub Pages (2026-09-15)
 

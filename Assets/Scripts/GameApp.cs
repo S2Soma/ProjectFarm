@@ -476,13 +476,14 @@ namespace LQFarm
                 sub.rectTransform.pivot = new Vector2(0, 0.5f);
             }
 
-            // 56 px, pinned over the card's top-right corner so it reads as the card's own
-            // control rather than one more button on the header.
-            var close = UIKit.IconBtn(holder, null, Theme.Red, 0.5f, CloseAll);
-            close.GetComponent<RectTransform>().Anchor(UIKit.TopRight, new Vector2(14, 14), new Vector2(56, 56));
+            // Inside the ribbon, centred on its height (3..75 → 39) and 18 px from the card's right
+            // edge. It used to overhang the card's top-right corner by 14 px, which read as a button
+            // that had slipped off the panel (owner, 15/9).
+            var close = UIKit.IconBtn(head, null, Theme.Red, 0.5f, CloseAll);
+            close.GetComponent<RectTransform>().Anchor(UIKit.Right, new Vector2(-16, 2), new Vector2(52, 52));
             var closeIcon = UIKit.Img(close.transform, Theme.Skin.IconCross, Color.white, "x");
             closeIcon.preserveAspect = true;
-            closeIcon.rectTransform.Stretch(17, 17, 17, 17);
+            closeIcon.rectTransform.Stretch(16, 16, 16, 16);
 
             // body
             panel.Card = holder;
@@ -621,7 +622,7 @@ namespace LQFarm
             _plotPop = pop;
 
             float w = st == PlotState.Locked ? 340f : 420f;
-            float h = st == PlotState.Locked ? 172f : 214f;
+            float h = st == PlotState.Locked ? 172f : 222f;
             pop.sizeDelta = new Vector2(w, h);
 
             var bg = SurfaceLook.Add(pop, Looks.Paper, 24f).Fill;
@@ -707,11 +708,12 @@ namespace LQFarm
         RectTransform _popWaterRow;
         SkinButton _popWaterBtn, _popRushBtn;
 
-        /// <summary>A growing plot: two bars with one short caption each, and two buttons.
+        /// <summary>A growing plot: two bars, each with its time written inside it, and two buttons.
         ///
         /// It used to be one subtitle line, "Còn 12m 40s · Băng Giá · 3 quả · lượt tưới sau 4m 10s ·
-        /// còn 2 lượt", which ran out of a 340 px card on any long crop. Each fact now has its own
-        /// row with a fixed column for the caption, and the rows update while the card is open.</summary>
+        /// còn 2 lượt", which ran out of a 340 px card on any long crop; then a bar with a caption
+        /// column beside it ("chín sau 9p 39s"). The owner asked (15/9) for the time alone, inside
+        /// the bar: the icon in front of the bar already says which clock it is.</summary>
         void BuildGrowingPop(RectTransform pop, int i, Plot p)
         {
             var seed = GameData.Get(p.crop);
@@ -722,27 +724,29 @@ namespace LQFarm
             string sub = p.variant > 0 ? el.Grade + " " + el.name + " · " + fruits + " quả" + drinks : fruits + " quả mỗi lần thu" + drinks;
             PopTitle(pop, seed.name, sub);
 
-            const float left = 22f, iconW = 30f, textW = 146f;
-            float barW = pop.sizeDelta.x - left * 2f - iconW - 8f - textW;
+            const float left = 22f, iconW = 30f, barH = 26f;
+            float barW = pop.sizeDelta.x - left * 2f - iconW - 4f;
 
-            RectTransform Row(float y, Sprite icon, Color iconTint, Color fill, out Image bar, out Text caption)
+            RectTransform Row(float y, Sprite icon, Color iconTint, Color fill, Color line, out Image bar, out Text caption)
             {
                 var row = UIKit.Node("row", pop);
                 row.anchorMin = new Vector2(0, 1); row.anchorMax = new Vector2(1, 1);
                 row.pivot = new Vector2(0.5f, 1f);
-                row.offsetMin = new Vector2(left, y - 26f); row.offsetMax = new Vector2(-left, y);
+                row.offsetMin = new Vector2(left, y - barH); row.offsetMax = new Vector2(-left, y);
                 var ic = UIKit.Img(row, icon, iconTint, "ic");
                 ic.preserveAspect = true;
                 ic.rectTransform.Anchor(UIKit.Left, Vector2.zero, new Vector2(iconW - 4f, iconW - 4f));
-                bar = UIKit.Bar(row, Theme.Hex("#E3D3B3"), fill);
-                ((RectTransform)bar.transform.parent).Anchor(UIKit.Left, new Vector2(iconW + 4f, 0), new Vector2(barW, 14));
-                caption = UIKit.Label(row, "", 17, Theme.InkSoft, TextAnchor.MiddleRight);
-                caption.rectTransform.Anchor(UIKit.Right, Vector2.zero, new Vector2(textW, 26));
+                bar = UIKit.Bar(row, Theme.Hex("#E3D3B3"), fill, 13);
+                var track = (RectTransform)bar.transform.parent;
+                track.Anchor(UIKit.Left, new Vector2(iconW + 4f, 0), new Vector2(barW, barH));
+                // white with the fill's own dark line: reads on the filled part and on the beige track
+                caption = UIKit.LabelOutlined(track, "", 17, Color.white, TextAnchor.MiddleCenter, line);
+                caption.rectTransform.Stretch(0, 0, 0, 1);
                 return row;
             }
 
-            Row(-80f, Art.Icon(seed.art, p.variant), Color.white, Theme.Green, out _popGrow, out _popGrowText);
-            _popWaterRow = Row(-114f, Theme.Skin.Droplet, Theme.Blue, Theme.Hex("#5FB8F0"), out _popWater, out _popWaterText);
+            Row(-78f, Art.Icon(seed.art, p.variant), Color.white, Theme.Green, Theme.Hex("#1C7439"), out _popGrow, out _popGrowText);
+            _popWaterRow = Row(-112f, Theme.Skin.Droplet, Theme.Blue, Theme.Hex("#5FB8F0"), Theme.BlueDeep, out _popWater, out _popWaterText);
 
             var water = UIKit.Btn(pop, "Tưới nước", Theme.Blue, Theme.BlueDeep, 21, 20, () => DoWater(i));
             water.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(-92, 16), new Vector2(170, 52));
@@ -764,30 +768,26 @@ namespace LQFarm
             if (st != PlotState.Growing && st != PlotState.Thirsty) { ClosePlotPopup(); return; }
 
             _popGrow.fillAmount = Mathf.Clamp01(PlotLogic.Elapsed(p) / Mathf.Max(0.001f, p.dur));
-            _popGrowText.text = "chín sau " + Fmt.Time(PlotLogic.Remain(p));
+            _popGrowText.text = Fmt.Time(PlotLogic.Remain(p));
 
             bool open = st == PlotState.Thirsty;
             int windows = WaterSys.Remaining(p);
             if (open)
             {
                 _popWater.fillAmount = 1f;
-                // the time this watering takes off, never a percentage: "tưới: sớm 16p"
-                int sec = Mathf.RoundToInt(WaterSys.CutNow(p));
-                _popWaterText.text = sec > 0 ? "tưới: sớm " + Fmt.Time(sec) : "tưới ngay";
-                _popWaterText.color = Theme.BlueDeep;
+                // no clock to show while the window is open: the bar is full and says so
+                _popWaterText.text = "Tưới ngay";
             }
             else if (windows > 0)
             {
                 float period = WaterSys.Period(p.dur, WaterSys.Windows(p));
                 _popWater.fillAmount = Mathf.Clamp01(1f - WaterSys.NextWindowIn(p) / Mathf.Max(0.001f, period));
-                _popWaterText.text = "tưới sau " + Fmt.Time(Mathf.CeilToInt(WaterSys.NextWindowIn(p)));
-                _popWaterText.color = Theme.InkSoft;
+                _popWaterText.text = Fmt.Time(Mathf.CeilToInt(WaterSys.NextWindowIn(p)));
             }
             else
             {
                 _popWater.fillAmount = 0f;
-                _popWaterText.text = "đã hết lượt tưới";
-                _popWaterText.color = Theme.InkSoft;
+                _popWaterText.text = "Đủ nước";
             }
 
             if (_popWaterBtn != null)

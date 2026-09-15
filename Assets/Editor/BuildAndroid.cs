@@ -17,11 +17,11 @@ namespace LQFarm.EditorTools
     ///
     /// Output: Builds/Android/MATUFarm-&lt;version&gt;-&lt;yyyyMMdd-HHmm&gt;.apk
     ///
-    /// The game is called MATU Farm; "LQFarm" survives only in code (namespace, save file name,
+    /// The game is called MATU FArM; "LQFarm" survives only in code (namespace, save file name,
     /// the Tools menu), where renaming would cost saves and buy nothing a player sees.</summary>
     public static class BuildAndroid
     {
-        public const string ProductName = "MATU Farm";
+        public const string ProductName = "MATU FArM";
         /// <summary>Changed from com.lqfarm.game with the rename: a phone treats it as a new app,
         /// installed beside the old test build, with its own fresh save.</summary>
         const string BundleId = "com.mitfarm.game";

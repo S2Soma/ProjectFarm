@@ -9,7 +9,7 @@ namespace LQFarm
     /// <summary>Thú cưng: the pet book and the hatchery.
     ///
     /// Thú cưng — the pet chosen on the left, with what it does in numbers (plots a patrol, when
-    /// the next patrol is, its favourite snack); every pet on the right, the unhatched ones as
+    /// the next patrol is, what it snacks on); every pet on the right, the unhatched ones as
     /// dark silhouettes so the book shows what is left to find.
     ///
     /// Ấp trứng — one egg or ten, the odds in full, and how far the guarantee is. Hatching plays
@@ -62,12 +62,14 @@ namespace LQFarm
             if (_tab == 0) BuildBook(); else BuildHatchery();
         }
 
-        /// <summary>Called by the game every second while the panel is open.</summary>
+        /// <summary>Called by the game every second while the panel is open: where the pet is, and its patrol.</summary>
         public void TickTimer()
         {
             if (_timer == null || app.Pets == null) return;
-            int sec = app.Pets.SecondsToPatrol;
-            _timer.text = app.Pets.Busy ? "Đang đi tuần" : "Đi tuần sau " + (sec / 60) + ":" + (sec % 60).ToString("00");
+            var pets = app.Pets;
+            int sec = pets.SecondsToPatrol;
+            string where = pets.OnBridge ? "Trên cầu" : "Ở " + IslandSys.NameOf(pets.NearestIsland);
+            _timer.text = where + " · " + (pets.Busy ? "đang đi tuần" : "đi tuần sau " + (sec / 60) + ":" + (sec % 60).ToString("00"));
         }
 
         // ============================================================
@@ -125,27 +127,37 @@ namespace LQFarm
             Stars(left, new Vector2(tx, -112), lv);
             var jobs = UIKit.Label(left, "Mỗi lượt làm " + PetSys.JobsPerPatrol(d, lv) + " ô", 18, Theme.InkSoft, TextAnchor.MiddleLeft);
             jobs.rectTransform.Anchor(UIKit.TopLeft, new Vector2(tx, -150), new Vector2(tw, 28));
+            // It eats ANY produce (the favourite only weighs double): "Mê nhất: Dâu Tây" alone read as the
+            // one thing it eats. A full-width line under the portrait, since the text column is 196 wide.
             var fav = GameData.Get(d.favourite);
-            var favLine = UIKit.Label(left, "Mê nhất: " + (fav != null ? fav.name : d.favourite), 18, Theme.InkSoft, TextAnchor.MiddleLeft);
-            favLine.rectTransform.Anchor(UIKit.TopLeft, new Vector2(tx, -178), new Vector2(tw, 28));
+            var favLine = UIKit.Label(left, "Ăn vụng mọi nông sản, mê nhất " + (fav != null ? fav.name : d.favourite),
+                                      17, Theme.InkSoft, TextAnchor.MiddleLeft);
+            favLine.rectTransform.Anchor(UIKit.TopLeft, new Vector2(22, -212), new Vector2(386, 26));
 
+            // two lines of 18 px need 2 x 1.45 x 18 = 52; the timer below starts at -318
             var blurb = UIKit.Label(left, d.blurb, 18, Theme.Ink, TextAnchor.UpperLeft);
             blurb.horizontalOverflow = HorizontalWrapMode.Wrap;
-            blurb.rectTransform.Anchor(UIKit.TopLeft, new Vector2(22, -222), new Vector2(386, 84));
+            blurb.rectTransform.Anchor(UIKit.TopLeft, new Vector2(22, -242), new Vector2(386, 66));
 
             bool active = s.petActive == d.id;
             if (active)
             {
+                // "Ở Khổng Lồ · đi tuần sau 2:43": ~30 characters of 19 px in 386, a 30 px line box (≥ 1.45 × 19)
                 _timer = UIKit.Label(left, "", 19, Theme.GreenDeep, TextAnchor.MiddleCenter, FontStyle.Bold);
                 _timer.rectTransform.Anchor(UIKit.Bottom, new Vector2(0, 86), new Vector2(386, 30));
                 TickTimer();
-                var tag = UIKit.Btn(left, "Đang đi theo bạn", Theme.Cream3, Theme.Hex("#B9A98C"), 20, 20, null);
-                tag.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(0, 20), new Vector2(300, 56));
-                tag.interactable = false;
+                // The pet lives on one island and no longer follows the camera: this takes the player to it.
+                var find = UIKit.Btn(left, "Tìm " + d.name, Theme.Blue, Theme.BlueDeep, 22, 22, () =>
+                {
+                    int island = app.Pets != null ? app.Pets.NearestIsland : 0;
+                    app.CloseAll();
+                    app.GoToIsland(island);
+                });
+                find.GetComponent<RectTransform>().Anchor(UIKit.Bottom, new Vector2(0, 20), new Vector2(300, 56));
             }
             else
             {
-                var follow = UIKit.Btn(left, "Cho đi theo", Theme.Green, Theme.GreenDark, 22, 22, () =>
+                var follow = UIKit.Btn(left, "Cho ra vườn", Theme.Green, Theme.GreenDark, 22, 22, () =>
                 {
                     GS.Local.petActive = d.id;
                     GS.Save();

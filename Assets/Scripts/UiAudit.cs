@@ -540,6 +540,91 @@ namespace LQFarm
             Debug.Log("[UiAudit] Tài khoản xong.");
         }
 
+        /// <summary>The islands alive, I00–I95: every island by day, under snow by day and by night, and on a
+        /// clear night; the river and waterfall as a motion sequence; the whole map by day and under snow.
+        ///
+        /// Islands the player has not bought are opened for the pass and closed again afterwards. Saving is
+        /// held off for the whole pass (<see cref="PlayerState.loaded"/> is lowered, which SaveIO.Save
+        /// refuses), so a borrowed unlock can never reach the file.</summary>
+        public static IEnumerator RunIslandsAlive(GameApp app)
+        {
+            app.EnsureBuilt();
+            yield return null;
+            string dir = System.IO.Path.GetFullPath(OutputDir);
+            System.IO.Directory.CreateDirectory(dir);
+            var s = GS.Local;
+            bool quiet = Tutorial.SuppressTips;
+            Tutorial.SuppressTips = true;
+            bool wasLoaded = s.loaded;
+            s.loaded = false;
+            var was = new List<bool>();
+            for (int i = 0; i < IslandSys.Max; i++)
+            {
+                var isl = s.EnsureIsland(i);
+                was.Add(isl.unlocked);
+                isl.unlocked = true;
+            }
+            s.SyncPlots();
+            app.SyncIslands();
+            app.Farm.SyncBridges(animateNew: false);
+            app.ForceRedraw();
+            app.CloseAll(); app.CloseSeedSheet(); app.Hud.CloseMenu();
+
+            string[] keys = { "vuonnha", "nuoc", "khonglo", "gio", "bang", "hoa", "loi", "vang" };
+            for (int i = 0; i < IslandSys.Max; i++)
+            {
+                app.GoToIsland(i);
+                yield return new WaitForSecondsRealtime(1.2f);
+                foreach (var (w, h, tag) in new[] { (Weather.Sunny, 12f, "0_day"), (Weather.Snow, 12f, "1_snow_day"), (Weather.Snow, 23f, "2_snow_night"), (Weather.Sunny, 23f, "3_night") })
+                {
+                    app.WeatherView.ForceWeather(w);
+                    DayCycle.ForceHour(h);
+                    app.SkyView.Repaint();
+                    yield return new WaitForSecondsRealtime(0.9f);
+                    yield return Shot(dir, "I" + i + tag + "_" + keys[i]);
+                }
+            }
+
+            // the river and the waterfall moving: six frames a fifth of a second apart
+            app.WeatherView.ForceWeather(Weather.Sunny);
+            DayCycle.ForceHour(12f);
+            app.SkyView.Repaint();
+            app.GoToIsland(1);
+            yield return new WaitForSecondsRealtime(1.4f);
+            for (int f = 0; f < 6; f++)
+            {
+                string path = System.IO.Path.Combine(dir, "I8" + f + "_river_motion.png");
+                if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
+                ScreenCapture.CaptureScreenshot(path);
+                yield return new WaitForSecondsRealtime(0.2f);
+            }
+            yield return new WaitForSecondsRealtime(0.6f);
+
+            app.ShowArchipelago();
+            yield return new WaitForSecondsRealtime(1.4f);
+            yield return Shot(dir, "I90_map_day");
+            app.WeatherView.ForceWeather(Weather.Snow);
+            yield return new WaitForSecondsRealtime(0.9f);
+            yield return Shot(dir, "I91_map_snow");
+            app.Farm.Camera.FlyTo(ArchipelagoView.IslandOrigin(1), app.Farm.Camera.ZBase * 0.59f, 0.3f);
+            app.WeatherView.ForceWeather(Weather.Sunny);
+            yield return new WaitForSecondsRealtime(1.2f);
+            yield return Shot(dir, "I92_mid_zoom");
+
+            // put everything back
+            for (int i = 0; i < IslandSys.Max && i < was.Count; i++) s.islands[i].unlocked = was[i];
+            app.SyncIslands();
+            app.Farm.SyncBridges(animateNew: false);
+            app.ForceRedraw();
+            app.GoToIsland(0);
+            app.WeatherView.ReleaseWeather(WeatherSys.Now(s));
+            DayCycle.Release();
+            app.SkyView.Repaint();
+            s.loaded = wasLoaded;
+            Tutorial.SuppressTips = quiet;
+            Debug.Log("[UiAudit] Đảo sống xong.");
+        }
+
         /// <summary>The flight from the start screen into the farm, T00–T29: the farm is torn down
         /// (saved first), an idle start screen comes back without signing in, and its way in is
         /// taken exactly as a button takes it. The cinematic's clock is held by this pass and stopped

@@ -293,7 +293,7 @@ namespace LQFarm
                 key = "waitWater" + growing, dim = true, passThrough = true, hand = false,
                 target = growing >= 0 ? () => PlotRect(growing) : (Func<Rect?>)null, holeRadius = 60f, holePad = 4f,
                 title = "Cây đang lớn",
-                body = "Ô nứt nẻ viền xanh là cây đang khát. Tưới để cây chín sớm hơn.",
+                body = "Ô có giọt nước nhảy là cây đang khát. Tưới để cây chín sớm hơn.",
                 secondary = "Bỏ qua hướng dẫn", onSecondary = Skip,
             });
         }
@@ -313,7 +313,7 @@ namespace LQFarm
             {
                 key = "tapWater" + plot, dim = true,
                 title = "Cây đang khát!",
-                body = "Chạm vào ô viền xanh để tưới nước.",
+                body = "Chạm vào ô có giọt nước để tưới.",
                 target = () => PlotRect(plot), holeRadius = 60f, holePad = 4f,
                 secondary = "Bỏ qua hướng dẫn", onSecondary = Skip,
             });
@@ -640,7 +640,7 @@ namespace LQFarm
             new Tip
             {
                 id = "water", title = "Cây đang khát",
-                body = "Ô nứt nẻ viền xanh là tới cữ tưới. Chạm để tưới: mỗi lần tưới, cây chín sớm hơn một khoảng (chạm vào cây để xem).",
+                body = "Ô có giọt nước (đất nứt, viền xanh chạy) là tới cữ tưới. Chạm để tưới: mỗi lần tưới, cây chín sớm hơn một khoảng (chạm vào cây để xem).",
                 ready = s => s.stats.water == 0 && GameApp.I != null && GameApp.I.Farm != null && GameApp.I.Farm.WaterablePlots().Count > 0,
                 alreadyFn = s => s.stats.water > 0,
                 target = a => { var w = a.Farm.WaterablePlots(); return w.Count > 0 ? a.Farm.PlotRoot(w[0]) : null; },

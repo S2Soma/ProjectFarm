@@ -90,16 +90,32 @@ Drawn procedurally by Tools/gen_chrome.py for this project.
 
 Resources/Audio/  (sound effects)
 ---------------------------------
-All synthesised from scratch for this project by Tools/gen_sfx.py
-(2026-09-15): tap, tab, toggle, menu_open/close, panel_open/close,
-harvest_0/1, plant_0/1, water, coins, error, claim, mutation, chest_open,
+Synthesised from scratch for this project by Tools/gen_sfx.py
+(2026-09-15): water, coins, error, claim, mutation, chest_open,
 plank_0..2, level_up, island_unlock, legendary. Sine partials (marimba,
 kalimba, bell, harp), filtered noise (leaves, soil, air) and a small
-algorithmic room — no samples, no third-party sounds, nothing to license.
-They replace the Kenney CC0 audio used until then (same file names), so no
-Kenney sound ships any more. Resources/Audio/Kenney-License.txt stays: the
-Kenney CC0 images elsewhere (Art/ui2, Art/crop) are under the same licence.
+algorithmic room — no samples. They replace the Kenney CC0 audio used
+until then (same file names), so no Kenney sound ships any more.
+Resources/Audio/Kenney-License.txt stays: the Kenney CC0 images elsewhere
+(Art/ui2, Art/crop) are under the same licence.
 (cine_whoosh.ogg and cine_chime.ogg: see below.)
+
+Resources/Audio/tap, tab, toggle, menu_open, menu_close, panel_open,
+panel_close, harvest_0/1, plant_0/1 .ogg  (the sounds that answer a touch)
+-----------------------------------------------------------------------
+Built by Tools/make_press_sfx.py (2026-09-15, second round) from recorded
+mouth pops:
+  "Pop sounds" by cogitollc — OpenGameArt.org, posted 2022-07-14
+  https://opengameart.org/content/pop-sounds
+  License: CC0 1.0 Universal (public domain dedication)
+  Files used: pop4.ogg, pop6.ogg, pop7.ogg, pop9.ogg, pop10.ogg (sha1s in
+  the script). Author's note: "Pop sounds created for our first game, you
+  can use it too" — recorded on an iPhone SE (Voice Memos, Ocenaudio).
+Processed, not used as is: trimmed, resampled to pitch (A-flat major
+pentatonic), layered, low-passed, levelled. The panel sounds add
+synthesised air (gen_sfx.swish); harvest and plant add gen_sfx's
+synthesised soil and leaf noise. The originals are not in the repo;
+--fetch downloads them. Credit is not required by CC0; given here anyway.
 
 Resources/Audio/Music/terrace_in_the_clouds.ogg  (background music)
 -------------------------------------------------------------------
@@ -116,6 +132,9 @@ Fine for test builds.
 Resources/Art/bridge/, Resources/Art/sky/
 -----------------------------------------
 Drawn procedurally for this project (Tools/gen_bridge.py, Tools/gen_sky.py).
+The clouds (cumulus_*, sea_*, cirrus, cloud_noise) are numpy paintings of
+soft ellipsoid lobes and noise, lit at runtime by Resources/Shaders/UICloud
+and UICloudFloat (written for this project). Original; nothing traced or sampled.
 bridge_lantern.png is cut from Art/gen/fence_gate.png (itself sheared from
 the owner-supplied Art/farm/fence_lamp.png — same provenance caveat).
 
@@ -132,3 +151,47 @@ Synthesised from scratch for this project by Tools/gen_cine_audio.py
 (band-passed noise for the whoosh, sine partials for the chime). No samples.
 Chime retuned to A-flat and whoosh low-passed on 2026-09-15 to match the
 new effects.
+
+Resources/Art/life/, Resources/Art/snow/, Resources/Art/beds/bed_frost.png,
+Resources/Art/islands/island_*_snow.png, island_{2,3,4,5}_glow.png,
+Resources/Shaders/UIWater|UIFall|UIPlume|UIDrift|UISway|UIGlow|UIArc|UIAurora.shader
+-----------------------------------------------------------------------------------
+The islands' ambient life and snow (2026-09-15), drawn procedurally for this
+project: Tools/gen_life.py (butterflies, bee, gull, koi, dragonfly, the meadow /
+giant-flora / wind atlases, the flag pole, lightning rod, snowy pine, vent,
+treasure chest and coin piles, their light masks (the windmill, pinwheel and
+crystals it used to draw were replaced by the painted decor below),
+the tileable noise), Tools/gen_snow.py (snow caps and bed frost) and
+Tools/gen_islands.py (snow cover, light masks, Đảo Hoả's yard fissures).
+Original designs; nothing traced, sampled or modelled on another game.
+The snow caps are computed from the silhouettes of the existing fence and
+farm props, so they inherit those sprites' provenance caveat (see Art/farm).
+Particle sprites Art/fx/p_dot and Art/items/particle_leaf|particle_petal are
+reused as is.
+
+Resources/Art/decor/, Assets/Scripts/Farm/DecorCatalog.cs
+---------------------------------------------------------
+Painted yard props (well, windmill, market stall, clay oven, campfire, crystal
+cluster, giant mushroom, lanterns, signs, barrels, carts, …) cut by
+Tools/slice_decor.py from four sheets the project owner generated with
+ChatGPT (OpenAI) on 2026-09-15 and placed at the repo root:
+"ChatGPT Image Sep 15, 2026, 06_49_03 PM.png", "… 06_49_15 PM.png",
+"… 06_49_24 PM.png", "… 06_49_33 PM.png". This project only cut, cleaned the
+alpha and edge colours, padded them to a ground pivot, added contact shadows
+and recoloured the grass skirts to each island's ground (snow, ash, slate,
+sand) and one crystal to ice; the windmill's sails were lifted off
+(mill_sails.png, four copies of one painted sail) and the roof and tower behind
+them rebuilt from the visible paint; the light masks (*_glow), the snow caps
+and the skirt snow overlays in Art/snow/ are computed from those cuts (the
+skirt overlays of Art/farm haystack, rock, signpost and banner likewise). AI-generated art provided by the
+owner as project input: usage rights for a public release are the owner's to
+confirm, like the other owner-provided sheets above. No third-party decor
+pack was downloaded: the free CC0 sets considered (Kenney's farm/nature kits,
+OpenGameArt isometric farm tiles) are flat vector or pixel styles that do not
+sit next to these paintings.
+
+Resources/Art/beds/thirst_badge.png, thirst_drop.png, bed_glow_thirst.png,
+Resources/Shaders/UIThirst.shader, UIThirstRim.shader
+---------------------------------------------------------------------------
+The thirsty plot's water drop, ripple ring, contact shadow and rim light, drawn
+procedurally for this project by Tools/gen_beds.py. Original.

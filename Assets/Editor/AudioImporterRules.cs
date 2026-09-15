@@ -54,9 +54,10 @@ namespace LQFarm.EditorTools
             foreach (var platform in new[] { "Android", "iOS", "Standalone" })
                 if (im.ContainsSampleSettingsOverride(platform)) im.ClearSampleSettingOverride(platform);
 
-            // not exposed as a property; it is the "normalize" field of the importer
+            // not exposed as a property. The .meta calls it "normalize" but the serialized property is
+            // "m_Normalize" — looking up only "normalize" found nothing, so it was never switched off.
             var so = new SerializedObject(im);
-            var normalize = so.FindProperty("normalize");
+            var normalize = so.FindProperty("m_Normalize") ?? so.FindProperty("normalize");
             if (normalize != null && normalize.boolValue)
             {
                 normalize.boolValue = false;

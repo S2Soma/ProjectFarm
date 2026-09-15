@@ -50,6 +50,9 @@ namespace LQFarm
         /// 94 below the field centre.</summary>
         static readonly Vector2 IslandSpriteSize = new Vector2(1440f, 920.16f);
         const float IslandSpriteY = -94f;
+        /// <summary>The painting's rect, for layers drawn over it (IslandLife's light masks).</summary>
+        public static Vector2 IslandSpriteRect => IslandSpriteSize;
+        public const float IslandSpriteCentreY = IslandSpriteY;
 
         public static Vector2 GridPoint(float u, float v) { return new Vector2((u - v) * StepX, -(u + v) * StepY); }
         /// <summary>How far out the left and right tips of the grass reach.</summary>
@@ -82,6 +85,11 @@ namespace LQFarm
 
         public RectTransform Field { get; private set; }
         RectTransform _plotLayer, _labelLayer, _fxLayer, _decoBack, _decoFront;
+        /// <summary>The island's ambient life (see <see cref="IslandLife"/>): its ground layer sits on the
+        /// painting under the snow; its creatures live on two small canvases, one under the plots and
+        /// one over the front fence, so a butterfly moving rebuilds only them.</summary>
+        RectTransform _ground, _behind, _lifeBack, _lifeFront;
+        IslandLife _life;
         GraphicRaycaster _plotRaycaster;
         bool _lodFarm = true;
         public Action<int> onPlotTapped;
@@ -109,13 +117,15 @@ namespace LQFarm
             public MutationFx fx;
             /// <summary>The worn plot skin's border (Trang trí ▸ Ô đất), over the bed, under everything else.</summary>
             public Image skin;
+            /// <summary>Frost on the rim and snow in the furrow (Art/beds/bed_frost), shown while snow lies.</summary>
+            public Image frost;
             public MutationTint cropTint, fruitTint;
-            /// <summary>Two thin bars in front of the bed, in the label layer above every plot: how
-            /// far the crop has grown, and how close the next watering window is.</summary>
-            public RectTransform bars;
-            public Image growFill, waterFill;
-            public RectTransform waterBar, growBar;
-            public bool sBars;
+            /// <summary>The thirsty signal (owner, 15/9): a water drop hopping on the ground at the front-left of
+            /// the crop, in the label layer so the crops of the row in front never cover it, and a brighter rim
+            /// with light running round it on the bed. Both animate in shaders (MiT/UI Thirst, Thirst Rim).</summary>
+            public LifeQuads thirst;
+            public Image thirstRim;
+            public bool sThirst;
             public string sCrop, sTile, sRim = "";
             public int sStage = -1, sVariant = -1;
             public PlotState sState = (PlotState)255;
@@ -138,6 +148,8 @@ namespace LQFarm
             Field.Anchor(UIKit.Center, new Vector2(0, -26), new Vector2(760, 460));
 
             _decoBack = UIKit.Node("decoBack", Field); _decoBack.Stretch();
+            _lifeBack = UIKit.Node("lifeBack", Field); _lifeBack.Stretch();
+            _lifeBack.gameObject.AddComponent<Canvas>();
             _plotLayer = UIKit.Node("plots", Field);   _plotLayer.Stretch();
             // Its own canvas + raycaster, so zooming out can disable plot hit-testing for the
             // whole island in one assignment instead of touching sixteen colliders.
@@ -145,19 +157,36 @@ namespace LQFarm
             plotCanvas.overrideSorting = false;
             _plotRaycaster = _plotLayer.gameObject.AddComponent<GraphicRaycaster>();
             _decoFront = UIKit.Node("decoFront", Field); _decoFront.Stretch();
-            // The selection outline lives ABOVE every plot, so the bed being planted stays visible
-            // over the crops of the row in front.
-            // With beds touching, the crop two rows in front stands up far enough to cover the
-            // countdown of the plot behind it — the one number the player is reading.
+            _lifeFront = UIKit.Node("lifeFront", Field); _lifeFront.Stretch();
+            _lifeFront.gameObject.AddComponent<Canvas>();
+            // ABOVE every plot: the selection outline (the bed being planted stays visible over the crops
+            // of the row in front), the "Cấp N" chip on the next plot, and the thirsty drops — with beds
+            // touching, a crop two rows in front stands up far enough to cover anything drawn on its bed.
             _labelLayer = UIKit.Node("labels", Field); _labelLayer.Stretch();
+            _thirstLayer = UIKit.Node("thirst", _labelLayer); _thirstLayer.Stretch();
             _fxLayer = UIKit.Node("fx", Field);        _fxLayer.Stretch();
 
+            _life = new IslandLife(this, IslandSys.Def(islandIndex).style);
             BuildIsland();
             BuildPlots();
             BuildScenery();
+            _life.Build(_ground, _behind, _lifeBack, _lifeFront);
             BuildLockSign();
             RenderLock();
+            Recolour();
         }
+
+        /// <summary>Advance this island's creatures (ArchipelagoView calls it once a frame).
+        /// <paramref name="visible"/>: on screen and close enough to see them. A locked island under its
+        /// veil stays still.</summary>
+        public void StepLife(float t, float dt, bool visible)
+        {
+            _life?.Step(t, dt, visible && !Locked);
+            // the drops are shader-animated, but an island off screen or a map pulled far back has no use for them
+            if (_thirstLayer != null && _thirstLayer.gameObject.activeSelf != visible) _thirstLayer.gameObject.SetActive(visible);
+        }
+
+        RectTransform _thirstLayer;
 
         // ============================================================
         // locked islands
@@ -293,12 +322,20 @@ namespace LQFarm
             var shade = UIKit.Img(holder, Theme.Glow(), Theme.Hex("#1A2550").Alpha(0.10f), "cloudShade");
             shade.rectTransform.Anchor(UIKit.Center, new Vector2(0, -540), new Vector2(1640, 380));
 
+            // the sky right behind this island (Đảo Băng's aurora): the painting covers its foot
+            _behind = UIKit.Node("behind", holder);
+            _behind.Anchor(UIKit.Center, Vector2.zero, Vector2.one);
+
             // Each island has its own painting (Tools/gen_islands.py): outline, ground, cliff and
             // details all differ, so six islands in a row read as six places. The offset puts
             // the island's top surface — not the sprite's centre — on the field origin.
             var island = UIKit.Img(holder, IslandSprite(islandIndex), Color.white, "island");
             island.rectTransform.Anchor(UIKit.Center, new Vector2(0, IslandSpriteY), IslandSpriteSize);
             _land = island;
+
+            // the island's moving ground (a river, lava light, glints) — on the painting, under the snow
+            _ground = UIKit.Node("ground", holder);
+            _ground.Anchor(UIKit.Center, Vector2.zero, Vector2.one);
 
             // Snow cover for snowy hours, cut from this island's own top surface.
             var snowSprite = Art.Load("Art/islands/island_" + IslandSys.Def(islandIndex).style + "_snow");
@@ -328,6 +365,11 @@ namespace LQFarm
             }
         }
 
+        /// <summary>The painted decor props carry their island's ground in their own art (a snow, ash, slate or sand
+        /// skirt), so they take only a third of the island's identity tint — the full scorch on Đảo Hoả turned
+        /// them to mud.</summary>
+        static Color DecorTint(Color islandTint) { var c = Color.Lerp(Color.white, islandTint, 0.35f); c.a = 1f; return c; }
+
         UnityEngine.UI.Image _land, _snowCap;
 
         /// <summary>Weather on the land: the island's own identity tint multiplied by the hour's,
@@ -342,7 +384,7 @@ namespace LQFarm
 
         /// <summary>The time of day's light on this island (see DayCycle): multiplied over the
         /// weather tint on the land, the beds, the crops and every prop. The lantern glow, the bed
-        /// state lights and the timers are NOT tinted — they are light sources and readouts, and
+        /// state lights and the thirsty drop are NOT tinted — they are light sources and readouts, and
         /// dimming them at night would hide exactly what night needs to show.</summary>
         public void SetAmbient(Color land, Color crop)
         {
@@ -358,15 +400,30 @@ namespace LQFarm
         void Recolour()
         {
             var a = _ambient; a.a = 1f;
-            if (_land != null) _land.color = _weatherTint * a;
+            var landLit = _weatherTint * a; landLit.a = 1f;
+            if (_land != null) _land.color = landLit;
+
+            // Snow is painted opaque where it lies (gen_islands.py paint_snow, gen_snow.py), so the
+            // weather only fades it in and out: alpha IS the amount of snow. It takes the hour's light,
+            // cooled toward moonlight as the light falls, never the weather's own tint.
+            bool snowing = _snow > 0.01f;
+            var snowCol = SnowLight(a); snowCol.a = _snow;
             if (_snowCap != null)
             {
-                // a dusting, not a sheet: at 0.92 the lawn vanished and the whole island read as fogged
-                var c = Color.white * a; c.a = _snow * 0.62f; _snowCap.color = c;
-                if (_snowCap.gameObject.activeSelf != (_snow > 0.01f)) _snowCap.gameObject.SetActive(_snow > 0.01f);
+                _snowCap.color = snowCol;
+                if (_snowCap.gameObject.activeSelf != snowing) _snowCap.gameObject.SetActive(snowing);
             }
+            foreach (var cap in _snowCaps)
+            {
+                if (cap == null) continue;
+                cap.color = snowCol;
+                if (cap.gameObject.activeSelf != snowing) cap.gameObject.SetActive(snowing);
+            }
+
+            // The soil stays soil under snow: dark and readable, with frost only on the rims and
+            // snow in the furrows (bed_frost). Whitening the soil itself washed the crops out.
             var soil = Color.Lerp(Color.white, _weatherTint, 0.6f);
-            soil = Color.Lerp(soil, new Color(0.93f, 0.96f, 1f), _snow * 0.22f);
+            soil = Color.Lerp(soil, new Color(0.90f, 0.93f, 1f), _snow * 0.08f);
             soil *= a;
             soil.a = 1f;
             _soilTint = soil;
@@ -379,14 +436,41 @@ namespace LQFarm
                 // crops take less of the dark than the land (DayCycle.FloorAmbient)
                 if (v.crop != null) v.crop.color = v.cropBase * _cropAmbient.Alpha(1f);
                 if (v.fruit != null) v.fruit.color = v.cropBase * _cropAmbient.Alpha(1f);
+                RenderFrost(v);
             }
             var prop = PropTint(islandIndex) * a;
             prop.a = 1f;
             foreach (var im in _sceneryImages) if (im != null) im.color = prop;
+            var decor = DecorTint(PropTint(islandIndex)) * a;
+            decor.a = 1f;
+            foreach (var im in _decorImages) if (im != null) im.color = decor;
+            _life?.Recolour(landLit, prop, _snow);
         }
+
+        /// <summary>Snow under the hour's light: white by day, a cool moonlit blue as the light falls.</summary>
+        static Color SnowLight(Color ambient)
+        {
+            float lum = 0.299f * ambient.r + 0.587f * ambient.g + 0.114f * ambient.b;
+            float dusk = Mathf.Clamp01((1f - lum) * 1.8f);
+            var c = ambient * Color.Lerp(Color.white, new Color(0.80f, 0.87f, 1.0f), dusk);
+            c.a = 1f;
+            return c;
+        }
+
+        /// <summary>Frost on an open bed while snow lies; never on a locked patch of lawn.</summary>
+        void RenderFrost(PlotView v)
+        {
+            if (v.frost == null) return;
+            bool on = _snow > 0.01f && v.sState != PlotState.Locked;
+            if (v.frost.gameObject.activeSelf != on) v.frost.gameObject.SetActive(on);
+            if (on) v.frost.color = SnowLight(_ambient).Alpha(_snow);
+        }
+
+        readonly List<Image> _snowCaps = new List<Image>();
 
         Color _soilTint = Color.white;
         readonly List<Image> _sceneryImages = new List<Image>();
+        readonly List<Image> _decorImages = new List<Image>();
 
         void BuildPlots()
         {
@@ -408,7 +492,7 @@ namespace LQFarm
                 root.Anchor(UIKit.Center, pos, new Vector2(TW, TH) * size);
 
                 // PlotPress scales the root on touch, so the fixed PlotScale lives one level down.
-                // A big plot is the same bed drawn twice the size: its crop, rim, bars' anchor and
+                // A big plot is the same bed drawn twice the size: its crop, rim, thirsty drop and
                 // tap area all grow with it.
                 var body = UIKit.Node("body", root);
                 body.Anchor(UIKit.Center, Vector2.zero, new Vector2(TW, TH));
@@ -426,6 +510,11 @@ namespace LQFarm
                 v.skin.rectTransform.Anchor(UIKit.Center,
                     new Vector2(0, (0.5f - TileAxis) * TileArtH), new Vector2(TileArtW, TileArtH));
                 v.skin.enabled = false;
+                v.frost = UIKit.Img(body, Art.Load("Art/beds/bed_frost"), new Color(1, 1, 1, 0), "frost");
+                v.frost.raycastTarget = false;
+                v.frost.rectTransform.Anchor(UIKit.Center,
+                    new Vector2(0, (0.5f - TileAxis) * TileArtH), new Vector2(TileArtW, TileArtH));
+                v.frost.gameObject.SetActive(false);
 
                 // State on the ground. Ripe and thirsty used to be a 44 px badge floating over the
                 // plant — a check mark or a droplet standing exactly where the crop is, on every
@@ -448,28 +537,17 @@ namespace LQFarm
                 anim.Add(v.sparkle.rectTransform, FieldAnimator.Motion.Breathe, v.sway + 1.3f, v.sparkle);
                 v.sparkle.gameObject.SetActive(false);
 
-                // Progress bars, not a countdown. The "12m 40s" chip sat under the crops at the
-                // bed's front corner, and the tall crops of the row in front covered it exactly when
-                // the times got long enough to matter. Two thin bars in the label layer, on the
-                // ground in front of this crop, cannot be covered and read at a glance at any zoom.
-                v.bars = UIKit.Node("bars" + i, _labelLayer);
-                v.bars.Anchor(UIKit.Center, pos + new Vector2(0, -HH * 0.62f * PlotScale * size), new Vector2(BarW + 12f, 22));
-                var bcg = v.bars.gameObject.AddComponent<CanvasGroup>();
-                bcg.blocksRaycasts = false; bcg.interactable = false;
-                // a small cream tag with a dark rim: a dark groove alone vanished into wet soil
-                var tag = Looks.Paper;
-                tag.edge = Theme.Hex("#5B3F24"); tag.edgeW = 2f;
-                tag.shadow = new Color(0f, 0f, 0f, 0.25f); tag.blur = 4f; tag.drop = new Vector2(0f, -1.5f);
-                tag.edgeW = 1.5f; tag.rimW = 0f;
-                SurfaceLook.Add(v.bars, tag, SurfaceLook.Pill);
-                var barTrack = Theme.Hex("#D8C49C");
-                v.growFill = UIKit.Bar(v.bars, barTrack, Theme.Green);
-                v.growBar = (RectTransform)v.growFill.transform.parent;
-                v.growBar.Anchor(UIKit.Top, new Vector2(0, -4), new Vector2(BarW, 8));
-                v.waterFill = UIKit.Bar(v.bars, barTrack, WaterBlue);
-                v.waterBar = (RectTransform)v.waterFill.transform.parent;
-                v.waterBar.Anchor(UIKit.Bottom, new Vector2(0, 4), new Vector2(BarW, 5));
-                v.bars.gameObject.SetActive(false);
+                // Thirsty: its own rim light, stronger than the ripe one and animated in its shader (light runs
+                // round the bed), so it is not on FieldAnimator and never touches the canvas while it plays.
+                v.thirstRim = UIKit.Img(body, Art.Load("Art/beds/bed_glow_thirst"), Color.white, "thirstRim");
+                v.thirstRim.raycastTarget = false;
+                v.thirstRim.material = ThirstRimMat;
+                v.thirstRim.rectTransform.Anchor(UIKit.Center,
+                    new Vector2(0, (0.5f - TileAxis) * TileArtH), new Vector2(TileArtW, TileArtH));
+                v.thirstRim.gameObject.SetActive(false);
+
+                v.thirst = BuildThirstBadge(i, pos, size);
+
                 v.glow = UIKit.Img(body, Theme.Glow(), new Color(1, 1, 1, 0), "glow");
                 v.glow.rectTransform.Anchor(UIKit.Center, new Vector2(0, 46), new Vector2(150, 150));
 
@@ -529,6 +607,7 @@ namespace LQFarm
             public bool mirror;
             public float depth;       // screen y of the ground contact; larger = farther back
             public string name;
+            public bool painted;      // a decor-sheet prop: takes a milder share of the island's tint
         }
 
         // Measured on Art/gen/fence_iso.png and fence_lamp_iso.png by Tools/gen_fences.py:
@@ -541,8 +620,12 @@ namespace LQFarm
         /// <summary>The lantern's flame, measured on fence_gate.png: 56.5 px out from the post
         /// base and 75 px up (column 76, row 91 against a pivot at 19.5, 166).</summary>
         static readonly Vector2 LanternFromPostPx = new Vector2(56.5f, 75.2f);
-        readonly List<(Vector2 at, bool front)> _lanterns = new List<(Vector2, bool)>();
+        /// <summary>Every flame on the island that lights up at night: the gate lanterns, and the lamps and fires of
+        /// the painted props (DecorCatalog.lights). Size is the glow's width; fires burn more orange.</summary>
+        readonly List<(Vector2 at, float size, bool fire)> _lanterns = new List<(Vector2, float, bool)>();
         readonly List<Image> _lanternGlows = new List<Image>();
+        readonly List<Color> _lanternCols = new List<Color>();
+        static readonly Color LampGlow = new Color(1f, 0.78f, 0.38f), FireGlow = new Color(1f, 0.56f, 0.22f);
         const int FenceSegments = 8;
 
         /// <summary>A fence round all four sides of the island, with a lantern gate at the left
@@ -642,7 +725,7 @@ namespace LQFarm
                             mirror = outLeft, depth = at.y,
                         });
                         var flame = new Vector2(LanternFromPostPx.x * (outLeft ? -1f : 1f), LanternFromPostPx.y) * scale;
-                        _lanterns.Add((at + flame, at.y < 0f));
+                        _lanterns.Add((at + flame, 170f, false));
                     }
                     else
                         pieces.Add(new Piece
@@ -668,17 +751,6 @@ namespace LQFarm
             return c.x > 0f && Mathf.Abs(c.y) < IslandSys.RiverHalf + 0.18f;
         }
 
-        /// <summary>Scenery, placed as a composition on the grid rather than by formula.
-        ///
-        /// Everything now stands INSIDE the fence, in the yard between it and the beds, and every
-        /// spot is given in grid cells so it sits on the same lines as the beds and the fence:
-        ///
-        ///   - the one large mass (the haystack) behind the back-left beds, where crops can
-        ///     overlap its base but it can never overlap a crop
-        ///   - the signpost and the banner at the two gates, just inside, greeting the bridges
-        ///   - a rock behind the back-right beds, and a low stone in the front yard
-        ///
-        /// Nothing tall goes in the front yard: anything there stands in front of the beds.</summary>
         /// <summary>Cosmetic yard plantings (see <see cref="Cosmetics"/>): id, art, grid spot, width.
         /// Both stand in the back yard, where nothing they are drawn over is a crop.</summary>
         public static readonly (string id, string art, float u, float v, float w)[] Decor =
@@ -700,54 +772,220 @@ namespace LQFarm
             }
         }
 
-        public static readonly (string art, float u, float v, float w)[] Props =
+        /// <summary>Every island's yard, one table (owner, 15/9: "decor phải giống với đảo" — each island's props
+        /// belong to that island). Keyed by the island's painting (<see cref="IslandDef.style"/>), in grid cells
+        /// (beds span ±2, the fence runs at ±<see cref="FenceCells"/>), and mirrored with the rest of the scenery
+        /// on odd islands (<see cref="Mirrored"/>).
+        ///
+        /// <c>art</c>: a painted prop cut from the owner's decor sheets (Resources/Art/decor, Tools/slice_decor.py,
+        /// measured in <see cref="DecorCatalog"/>) — on an island whose ground is not grass, its recoloured
+        /// skirt (<see cref="GroundOf"/>) is used when the prop has one; <c>farm:</c> the older painted props
+        /// (Art/farm); <c>life:</c> the props with a moving part drawn by Tools/gen_life.py (vents, lightning rods,
+        /// the flag, pines, the treasure) — kept only where no painted prop does the job.
+        /// <c>w</c>: drawn width. <c>low</c>: short enough (≤ 80 tall) for the front yard, where anything stands in
+        /// front of the beds.
+        ///
+        /// The yard rules (IslandTest "vật riêng từng đảo"): inside the fence and off the beds, clear of the
+        /// gates the bridges come in by, nothing tall in the front yard or in the top corner (a 16:9 screen cuts
+        /// it at farm zoom), no two props on one island standing on each other, not in Đảo Nước's river or on its
+        /// bank beds, and not on Vườn Nhà's two shop decorations (<see cref="Decor"/>).</summary>
+        public static readonly (int style, string art, float u, float v, float w, bool low)[] Places =
         {
-            // name, grid u, grid v, drawn width
-            // behind the back-left beds, not in the top corner: at farm zoom the top corner is
-            // under the top edge of a 16:9 screen, and the haystack was cut in half there
-            ("haystack", -2.36f, -1.05f, 128f),
-            ("rock",      0.55f, -2.36f,  96f),
-            ("signpost", -2.38f,  1.45f,  86f),
-            ("banner",    1.45f, -2.38f,  64f),
-            ("rock",     -0.95f,  2.40f,  62f),
+            // ---- 0 Vườn Nhà: a home garden — the sign and the hay by the left gate, a well greeting the right one,
+            //      a birdhouse, and small garden things along the front ----
+            (0, "farm:signpost",  -2.38f,  1.45f,  86f, false),
+            (0, "farm:haystack",  -2.36f, -1.05f, 128f, false),
+            (0, "watering_can",   -2.40f, -2.02f,  58f, true),
+            (0, "birdhouse_post",  0.00f, -2.40f,  58f, false),
+            (0, "well",            1.15f, -2.38f, 112f, false),
+            (0, "farm:rock",      -0.95f,  2.40f,  62f, true),
+            (0, "pumpkin_crate",   0.75f,  2.40f,  70f, true),
+            (0, "flower_barrow",   2.40f, -0.70f,  92f, true),
+            (0, "mailbox",         2.40f,  1.30f,  50f, true),
+            // ---- 6 Đảo Nước: the river is the show — a lantern tub by the spring, a lily pond and a bird bath
+            //      by the falls; the beds reach the fence elsewhere ----
+            // (the front yard's props hide behind the front fence here, so the lily pond takes the sign's place at the back)
+            (6, "lily_pond",      -2.38f,  1.40f, 100f, false),
+            (6, "water_tub",      -2.38f, -1.35f,  84f, false),
+            // not nearer the beds than 2.42: the pets' path from the right gate runs between the beds and this bird bath
+            (6, "bird_bath_g",     2.42f, -1.35f,  64f, true),
+            // ---- 7 Khổng Lồ: a giant toadstool, a blueberry bush, a glowing pod, mushrooms on a stump ----
+            (7, "farm:signpost",  -2.38f,  1.45f,  86f, false),
+            (7, "giant_shroom",   -2.38f, -0.30f, 120f, false),
+            (7, "stump_shrooms",  -2.40f, -1.75f,  84f, false),
+            (7, "blueberry",      -0.55f, -2.38f,  92f, false),
+            (7, "glow_pod",        0.75f, -2.38f,  70f, false),
+            (7, "farm:banner",     1.60f, -2.38f,  64f, false),
+            (7, "berry_basket",    0.20f,  2.40f,  62f, true),
+            (7, "farm:rock",       2.40f, -0.60f,  62f, true),
+            // ---- 1 Đảo Gió: the windmill, hay, a scarecrow, a signpost pointing the way, the flag flying ----
+            (1, "arrow_sign",     -2.38f,  1.45f,  64f, false),
+            (1, "mill",           -2.38f,  0.15f, 132f, false),
+            (1, "hay_barrel",     -2.38f, -1.25f, 118f, false),
+            (1, "life:flagpole",  -0.40f, -2.40f,  30f, false),
+            (1, "scarecrow",       0.75f, -2.38f,  84f, false),
+            (1, "farm:banner",     1.65f, -2.38f,  64f, false),
+            (1, "sunflower_fence", 2.40f,  0.50f,  96f, true),
+            (1, "farm:rock",      -0.90f,  2.40f,  62f, true),
+            // ---- 2 Đảo Băng: snowed-in pines, a well, crystals turned to ice, lamps for the long nights ----
+            (2, "sign_leaf",      -2.38f,  1.45f,  80f, false),
+            (2, "life:pine",      -2.38f,  0.35f,  92f, false),
+            (2, "well",           -2.38f, -0.95f, 112f, false),
+            (2, "life:pine",      -1.45f, -2.40f,  78f, false),
+            (2, "crystals",       -0.20f, -2.38f,  96f, false),
+            (2, "banner_lamp",     1.45f, -2.38f,  72f, false),
+            (2, "mossy_rock",      0.45f,  2.40f,  66f, true),
+            (2, "crystals",        2.40f, -0.60f,  58f, true),
+            // ---- 3 Đảo Hoả: vents breathing smoke, a clay oven and a campfire, all on ash ----
+            (3, "sign_leaf",      -2.38f,  1.45f,  80f, false),
+            (3, "life:vent",      -2.40f,  0.20f,  88f, true),
+            (3, "clay_oven",      -2.38f, -1.10f, 118f, false),
+            (3, "life:vent",      -0.30f, -2.40f,  84f, true),
+            (3, "campfire",        0.75f, -2.38f,  92f, false),
+            (3, "banner_lamp",     1.60f, -2.38f,  72f, false),
+            (3, "life:vent",       2.40f, -0.90f,  70f, true),
+            (3, "mossy_rock",      0.40f,  2.40f,  62f, true),
+            (3, "barrel",         -1.00f,  2.40f,  46f, true),
+            // ---- 4 Đảo Lôi: two lightning rods arcing, charged crystals, lamps on slate ----
+            (4, "sign_leaf",      -2.38f,  1.45f,  80f, false),
+            (4, "life:rod",       -2.40f,  0.60f,  50f, false),
+            (4, "life:rod",       -2.40f, -0.20f,  50f, false),
+            (4, "rock_lamp",      -2.38f, -1.35f,  96f, false),
+            (4, "crystals",       -0.35f, -2.38f, 100f, false),
+            (4, "lamp_iron",       0.55f, -2.38f,  50f, false),
+            (4, "banner_lamp",     1.50f, -2.38f,  72f, false),
+            (4, "crystals",        2.40f,  0.55f,  62f, true),
+            (4, "mossy_rock",      0.30f,  2.40f,  62f, true),
+            // ---- 5 Đảo Vàng: a market stall and a cart on gold sand, the treasure, spilled coins ----
+            (5, "sign_leaf",      -2.38f,  1.45f,  80f, false),
+            (5, "market",         -2.38f,  0.10f, 118f, false),
+            (5, "veg_cart",       -2.38f, -1.20f, 104f, false),
+            (5, "life:chest",     -0.30f, -2.40f, 100f, false),
+            (5, "lamp_iron",       0.85f, -2.38f,  50f, false),
+            (5, "banner_lamp",     1.65f, -2.38f,  72f, false),
+            (5, "life:coins",      0.50f,  2.40f,  66f, true),
+            (5, "life:coins",      2.40f, -1.00f,  58f, true),
+            (5, "barrel",          2.40f,  0.60f,  46f, true),
         };
+
+        /// <summary>For readers written against the two tables Places replaced (PetPaths): there are no props shared by
+        /// every island any more, so this is empty, and <see cref="StyleProps"/> is all of Places with the art's
+        /// source prefix dropped ("life:rod" → "rod"). New code should read Places or <see cref="PropsOn"/>.</summary>
+        public static readonly (string art, float u, float v, float w)[] Props = new (string, float, float, float)[0];
+        public static readonly (int style, string art, float u, float v, float w, bool low)[] StyleProps = StylePropsView();
+
+        static (int, string, float, float, float, bool)[] StylePropsView()
+        {
+            var list = new (int, string, float, float, float, bool)[Places.Length];
+            for (int i = 0; i < Places.Length; i++)
+            {
+                var p = Places[i];
+                SplitArt(p.art, out _, out var name);
+                list[i] = (p.style, name, p.u, p.v, p.w, p.low);
+            }
+            return list;
+        }
+
+        /// <summary>The ground a prop's skirt is recoloured to on an island painting, or null for grass.</summary>
+        public static string GroundOf(int style)
+        {
+            switch (style)
+            {
+                case 2: return "snow";
+                case 3: return "ash";
+                case 4: return "slate";
+                case 5: return "sand";
+                default: return null;
+            }
+        }
+
+        /// <summary>A prop's source and name: "farm:rock" → (Art/farm/, rock), "vent" → (Art/decor/, vent).</summary>
+        public static void SplitArt(string art, out string source, out string name)
+        {
+            int c = art.IndexOf(':');
+            source = c < 0 ? "decor" : art.Substring(0, c);
+            name = c < 0 ? art : art.Substring(c + 1);
+        }
+
+        /// <summary>The sprite path a place draws on an island of <paramref name="style"/>, ground variant included.</summary>
+        public static string SpritePath(string art, int style)
+        {
+            SplitArt(art, out var source, out var name);
+            if (source == "farm") return "Art/farm/" + name;
+            if (source == "life") return "Art/life/prop_" + name;
+            string ground = GroundOf(style);
+            if (ground != null && DecorCatalog.All.TryGetValue(name, out var e) && e.grounds != null)
+            {
+                // Đảo Băng's crystals are ice, not violet
+                if (ground == "snow" && System.Array.IndexOf(e.grounds, "ice") >= 0) return "Art/decor/" + name + "_ice";
+                if (System.Array.IndexOf(e.grounds, ground) >= 0) return "Art/decor/" + name + "_" + ground;
+            }
+            return "Art/decor/" + name;
+        }
+
+        /// <summary>The props standing on island <paramref name="islandIndex"/>, in grid cells with this island's mirror
+        /// applied, each with the rough radius of its footprint in cells — for anything that has to walk round
+        /// them (pets) or keep off them (IslandLife's plants).</summary>
+        public static List<(string art, Vector2 cell, float radius)> PropsOn(int islandIndex)
+        {
+            var list = new List<(string, Vector2, float)>();
+            var def = IslandSys.Def(islandIndex);
+            bool mirror = (islandIndex & 1) == 1 && def.layout != IslandLayout.River;
+            foreach (var p in Places)
+            {
+                if (p.style != def.style) continue;
+                SplitArt(p.art, out _, out var name);
+                float foot = DecorCatalog.All.TryGetValue(name, out var e) ? e.footW : 0.8f;
+                // mirroring x in the iso view swaps the two grid axes
+                var cell = mirror ? new Vector2(p.v, p.u) : new Vector2(p.u, p.v);
+                list.Add((p.art, cell, foot * p.w * 0.5f / (1.414f * StepX)));
+            }
+            if (islandIndex == 0)
+                foreach (var d in Decor) list.Add(("decor_" + d.id, new Vector2(d.u, d.v), d.w * 0.4f / (1.414f * StepX)));
+            return list;
+        }
+
+        /// <summary>Odd islands (except the river) draw their scenery mirrored left to right.</summary>
+        public bool Mirrored => (islandIndex & 1) == 1 && IslandSys.Def(islandIndex).layout != IslandLayout.River;
+
+        /// <summary>A yard spot in field space, mirrored the way this island's scenery is.</summary>
+        public Vector2 YardPoint(float u, float v)
+        {
+            var at = GridPoint(u, v);
+            if (Mirrored) at.x = -at.x;
+            return at;
+        }
 
         void BuildScenery()
         {
-            var props = Props;
-
-            // Every island drew this exact arrangement, so a row of them read as a tiling bug
-            // rather than an archipelago. What varies is which side the masses fall on, and which
-            // of the small props are present. Seeded on the island index, so an island looks the
-            // same every time it is drawn.
-            var rng = new System.Random(9173 + islandIndex * 31);
             var layout = IslandSys.Def(islandIndex).layout;
             // the river's banks run along one axis: mirroring would lay the props across it
             bool mirror = (islandIndex & 1) == 1 && layout != IslandLayout.River;
+            int style = IslandSys.Def(islandIndex).style;
 
             var pieces = new List<Piece>();
-            foreach (var p in props)
+            foreach (var p in Places)
             {
-                var sp = Art.Farm(p.art);
+                if (p.style != style) continue;
+                SplitArt(p.art, out var source, out var name);
+                var sp = Art.Load(SpritePath(p.art, style));
                 if (sp == null) continue;
-
-                // thin out the small scatter, never the gate props or the haystack
-                bool optional = p.art == "rock";
-                if (optional && islandIndex > 0 && rng.Next(100) < 35) continue;
-
-                // on Đảo Nước the beds reach half a cell further out and the river runs down the
-                // middle: nothing may stand in the water or on a bed
-                if (layout == IslandLayout.River && (Mathf.Abs(p.v) < IslandSys.RiverHalf + 0.25f
-                    || (Mathf.Abs(p.v) > 1.8f && Mathf.Abs(p.u) < 2.2f))) continue;
-
                 var at = GridPoint(p.u, p.v);
                 if (mirror) at.x = -at.x;
-                float w = p.w * (0.92f + (float)rng.NextDouble() * 0.16f);
+                bool painted = source == "decor" && DecorCatalog.All.TryGetValue(name, out _);
+                var entry = painted ? DecorCatalog.All[name] : default;
+                var size = new Vector2(p.w, p.w * sp.rect.height / sp.rect.width);
                 pieces.Add(new Piece
                 {
-                    sprite = sp, pivot = new Vector2(0.5f, 0f), at = at, name = "prop_" + p.art,
-                    size = new Vector2(w, w * sp.rect.height / sp.rect.width), depth = at.y,
+                    sprite = sp, pivot = new Vector2(0.5f, painted ? entry.pivotY : 0f), at = at,
+                    name = "prop_" + name, size = size, depth = at.y, painted = painted,
                 });
+                if (painted && entry.lights != null)
+                    foreach (var l in entry.lights)
+                    {
+                        var lit = at + new Vector2((l.at.x - 0.5f) * size.x, (l.at.y - entry.pivotY) * size.y);
+                        _lanterns.Add((lit, l.fire ? size.x * 1.5f : Mathf.Max(90f, size.x * 1.25f), l.fire));
+                    }
             }
 
             // Yard decorations bought in the shop, on the home island only. Built always and
@@ -774,8 +1012,8 @@ namespace LQFarm
             foreach (var pc in pieces)
             {
                 var layer = pc.depth < 0f ? _decoFront : _decoBack;
-                var im = UIKit.Img(layer, pc.sprite, tint, pc.name);
-                _sceneryImages.Add(im);
+                var im = UIKit.Img(layer, pc.sprite, pc.painted ? DecorTint(tint) : tint, pc.name);
+                (pc.painted ? _decorImages : _sceneryImages).Add(im);
                 if (pc.name.StartsWith("decor_")) _decor[pc.name.Substring(6)] = im;
                 var rt = im.rectTransform;
                 rt.anchorMin = rt.anchorMax = UIKit.Center;
@@ -783,7 +1021,13 @@ namespace LQFarm
                 rt.sizeDelta = pc.size;
                 rt.anchoredPosition = pc.at;
                 if (pc.mirror) rt.localScale = new Vector3(-1f, 1f, 1f);
+                AddSnowCap(im, pc.name);
+                // a windmill's blades, a vent's smoke: moving parts go in right after their prop
+                _life?.AttachToProp(pc.name, im, layer);
             }
+
+            // swaying plants: behind the beds after every back piece, in front before every front piece
+            _life?.BuildPlants(_decoBack, _decoFront);
 
             // Lantern light for the evening: a warm pool round each flame, invisible by day. All of
             // them on one nested canvas over the island, so the flicker rewrites only these.
@@ -792,12 +1036,50 @@ namespace LQFarm
             _lights.gameObject.AddComponent<Canvas>();
             foreach (var l in _lanterns)
             {
-                var glow = UIKit.Img(_lights, Theme.Glow(), new Color(1f, 0.78f, 0.38f, 0f), "lanternGlow");
-                glow.rectTransform.Anchor(UIKit.Center, l.at, new Vector2(170f, 150f));
+                var col = l.fire ? FireGlow : LampGlow;
+                var glow = UIKit.Img(_lights, Theme.Glow(), col.Alpha(0f), l.fire ? "fireGlow" : "lanternGlow");
+                glow.rectTransform.Anchor(UIKit.Center, l.at, new Vector2(l.size, l.size * (150f / 170f)));
                 glow.raycastTarget = false;
                 _lanternGlows.Add(glow);
+                _lanternCols.Add(col);
             }
             _lights.gameObject.SetActive(false);
+        }
+
+        /// <summary>The snow that settles on a piece of scenery (Art/snow/*_snow, Tools/gen_snow.py): the
+        /// same rect as the piece, grown upward by the art's padding, because a mound rises above a
+        /// sprite cropped to its own silhouette. A child of the piece, so it keeps its mirror and its
+        /// place in the depth order. Hidden until snow falls.</summary>
+        void AddSnowCap(Image piece, string name)
+        {
+            string key = name == "post" ? "fence_post" : name == "rail" ? "fence_rail" : name == "gate" ? "fence_gate"
+                       : name.StartsWith("prop_") ? name.Substring(5) : null;
+            if (key == null || piece.sprite == null) return;
+            // A painted prop's grass skirt goes under the snow too (Art/snow/<name>_skirt, Tools/slice_decor.py) — unless the
+            // prop already stands on a snow skirt (Đảo Băng's variants).
+            var skirt = Art.Load("Art/snow/" + key + "_skirt");
+            string spName = piece.sprite.name;
+            if (skirt != null && !spName.EndsWith("_snow") && !spName.EndsWith("_ice"))
+            {
+                var sk = UIKit.Img(piece.rectTransform, skirt, new Color(1, 1, 1, 0), "snowSkirt");
+                sk.raycastTarget = false;
+                sk.rectTransform.anchorMin = Vector2.zero;
+                sk.rectTransform.anchorMax = Vector2.one;
+                sk.rectTransform.offsetMin = sk.rectTransform.offsetMax = Vector2.zero;
+                sk.gameObject.SetActive(false);
+                _snowCaps.Add(sk);
+            }
+            var cap = Art.Load("Art/snow/" + key + "_snow");
+            if (cap == null) return;
+            float grow = cap.rect.height / Mathf.Max(1f, piece.sprite.rect.height) - 1f;
+            var im = UIKit.Img(piece.rectTransform, cap, new Color(1, 1, 1, 0), "snow");
+            im.raycastTarget = false;
+            var rt = im.rectTransform;
+            rt.anchorMin = Vector2.zero;
+            rt.anchorMax = new Vector2(1f, 1f + grow);
+            rt.offsetMin = rt.offsetMax = Vector2.zero;
+            im.gameObject.SetActive(false);
+            _snowCaps.Add(im);
         }
 
         /// <summary>How lit the lanterns are, 0 by day to 1 at night. Presentation only.</summary>
@@ -819,7 +1101,7 @@ namespace LQFarm
             for (int i = 0; i < _lanternGlows.Count; i++)
             {
                 float f = ArchipelagoView.Flicker(t, i * 1.7f + islandIndex * 0.9f);
-                _lanternGlows[i].color = new Color(1f, 0.78f, 0.38f, 0.75f * _lanternK * f);
+                _lanternGlows[i].color = _lanternCols[i].Alpha(0.75f * _lanternK * f);
             }
         }
 
@@ -860,7 +1142,7 @@ namespace LQFarm
 
             // The bed carries the whole state now, in priority order:
             //   ripe     warm soil, gold rim, glints          — collect me
-            //   thirsty  parched cracked soil, blue rim       — a watering window is open
+            //   thirsty  parched cracked soil, running blue rim, and a hopping water drop — a window is open
             //   watered  dark wet soil                        — watered at least once
             //   growing  plain tilled soil
             // "Watered" still means "has been watered", not "is growing": used for every growing
@@ -880,12 +1162,15 @@ namespace LQFarm
                 // grass, so it needs no extra fade (the old stone tile did).
                 v.tile.color = _soilTint;
                 v.sState = st; v.sTile = tileKey;
+                RenderFrost(v);
             }
 
             // the worn plot skin lies on every open bed of the owner's farm
             var skinSprite = st == PlotState.Locked ? null : CosmeticFx.PlotSkin(Cosmetics.Worn(Ctx.owner, CosmeticSlot.Plot));
             if (v.skin.sprite != skinSprite) v.skin.sprite = skinSprite;
             if (v.skin.enabled != (skinSprite != null)) v.skin.enabled = skinSprite != null;
+
+            SetThirst(v, st == PlotState.Thirsty);
 
             if (st == PlotState.Locked || st == PlotState.Empty)
             {
@@ -896,7 +1181,6 @@ namespace LQFarm
                     v.fruit.enabled = false; v.fruit.sprite = null;
                     v.fx.Set(0, 0f, Color.white);
                     SetRim(v, "");
-                    ShowBars(v, false);
                     v.sCrop = null; v.sStage = -1; v.sVariant = -1;
                 }
                 return;
@@ -945,45 +1229,7 @@ namespace LQFarm
                 v.sCrop = p.crop; v.sStage = stage; v.sVariant = variant;
             }
 
-            SetRim(v, st == PlotState.Ready ? "ready" : st == PlotState.Thirsty ? "water" : "");
-
-            // ---- progress bars ----
-            if (st == PlotState.Ready) ShowBars(v, false);
-            else
-            {
-                ShowBars(v, true);
-                v.growFill.fillAmount = Mathf.Clamp01(PlotLogic.Elapsed(p) / Mathf.Max(0.001f, p.dur));
-
-                // The water bar fills toward the next window and stays full, and bright, while one
-                // is open. With no window left there is nothing to wait for, so it goes.
-                bool hasWindow = WaterSys.Remaining(p) > 0;
-                if (v.waterBar.gameObject.activeSelf != hasWindow)
-                {
-                    v.waterBar.gameObject.SetActive(hasWindow);
-                    // one bar: a shorter tag with the grow bar in its middle
-                    v.bars.sizeDelta = new Vector2(BarW + 12f, hasWindow ? 22f : 16f);
-                    v.growBar.anchoredPosition = new Vector2(0, -4);
-                }
-                if (hasWindow)
-                {
-                    float period = WaterSys.Period(p.dur, WaterSys.Windows(p));
-                    float wait = WaterSys.NextWindowIn(p);
-                    bool open = st == PlotState.Thirsty;
-                    v.waterFill.fillAmount = open ? 1f : Mathf.Clamp01(1f - wait / Mathf.Max(0.001f, period));
-                    v.waterFill.color = open ? WaterOpen : WaterBlue;
-                }
-            }
-        }
-
-        const float BarW = 70f;
-        static readonly Color WaterBlue = Theme.Hex("#3E9BD8");
-        static readonly Color WaterOpen = Theme.Hex("#56C8FF");
-
-        void ShowBars(PlotView v, bool on)
-        {
-            v.sBars = on;
-            bool show = on && _lodFarm;
-            if (v.bars != null && v.bars.gameObject.activeSelf != show) v.bars.gameObject.SetActive(show);
+            SetRim(v, st == PlotState.Ready ? "ready" : "");
         }
 
         /// <summary>Redraw every plot whose state has moved on since it was last drawn.
@@ -1067,25 +1313,83 @@ namespace LQFarm
             bool on = kind.Length > 0;
             v.rim.gameObject.SetActive(on);
             v.sparkle.gameObject.SetActive(kind == "ready");
-            if (on) v.rim.sprite = Art.Load(kind == "ready" ? "Art/beds/bed_glow_ready" : "Art/beds/bed_glow_water");
         }
 
-        /// <summary>Farm level: plots are tappable and their chips are readable. Anything below
-        /// it: neither. See ArchipelagoView.ApplyLod for why this is a hard switch and not a fade.</summary>
+        static void SetThirst(PlotView v, bool on)
+        {
+            if (v.sThirst == on) return;
+            v.sThirst = on;
+            if (v.thirst != null) v.thirst.gameObject.SetActive(on);
+            if (v.thirstRim != null) v.thirstRim.gameObject.SetActive(on);
+        }
+
+        // ============================================================
+        // the thirsty drop
+        // ============================================================
+        /// <summary>Where the drop stands, in the plot's 168 x 84 space: on the ground at the front-left of the
+        /// crop's base, between it and the two plots in front — off this crop, and clear of theirs.</summary>
+        public static readonly Vector2 ThirstFoot = new Vector2(-38f, -16f);
+        /// <summary>The drop's cell, in world units (the painted drop fills 62% x 80% of it).</summary>
+        const float ThirstCell = 42f, ThirstHop = 0.18f;
+        /// <summary>The drop's cell in the plot's own units, for pictures of a thirsty bed drawn elsewhere.</summary>
+        public const float ThirstCellUnits = ThirstCell / PlotScale;
+
+        static Material _thirstMat, _thirstRimMat;
+        static Material ThirstMat
+        {
+            get
+            {
+                if (_thirstMat != null) return _thirstMat;
+                var sh = Resources.Load<Shader>("Shaders/UIThirst");
+                if (sh == null) return null;
+                _thirstMat = new Material(sh) { name = "UIThirst (plots)" };
+                _thirstMat.SetVector("_Hop", new Vector4(ThirstHop, 1.15f, 0.08f, 1.7f));
+                return _thirstMat;
+            }
+        }
+        static Material ThirstRimMat
+        {
+            get
+            {
+                if (_thirstRimMat != null) return _thirstRimMat;
+                var sh = Resources.Load<Shader>("Shaders/UIThirstRim");
+                if (sh != null) _thirstRimMat = new Material(sh) { name = "UIThirstRim (plots)" };
+                return _thirstRimMat;
+            }
+        }
+
+        /// <summary>One plot's drop: shadow, ripple ring and drop as three quads of one mesh (see UIThirst.shader),
+        /// built once and switched on and off with the plot's state.</summary>
+        LifeQuads BuildThirstBadge(int i, Vector2 pos, float size)
+        {
+            var tex = Art.Load("Art/beds/thirst_badge");
+            if (tex == null || ThirstMat == null) return null;
+            var q = LifeQuads.Create(_thirstLayer, "thirst" + i, ThirstMat, tex.texture);
+            float k = size > 1.5f ? 1.35f : 1f;
+            var foot = pos + ThirstFoot * PlotScale * size;
+            float c = ThirstCell * k;
+            float phase = i * 0.23f;
+            void Quad(Vector2 bl, Vector2 wh, int part)
+            {
+                q.Add(bl, bl + new Vector2(0, wh.y), bl + wh, bl + new Vector2(wh.x, 0),
+                      new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1), new Vector2(1, 0),
+                      new Vector4(part, phase, 0, 0));
+            }
+            Quad(foot - new Vector2(c * 0.45f, c * 0.45f), new Vector2(c * 0.9f, c * 0.9f), 2);          // shadow
+            Quad(foot - new Vector2(c * 0.8f, c * 0.8f), new Vector2(c * 1.6f, c * 1.6f), 0);            // ring
+            // the painted drop's bottom is 5% above its cell's: the quad starts that far below the foot
+            Quad(foot - new Vector2(c * 0.5f, c * 0.05f), new Vector2(c, c * (1f + ThirstHop)), 1);      // drop
+            q.gameObject.SetActive(false);
+            return q;
+        }
+
+        /// <summary>Farm level: plots are tappable. Anything below it: not. See ArchipelagoView.ApplyLod for why this is a hard switch and not a fade.</summary>
         public void SetLod(bool farmLevel)
         {
             if (_lodFarm == farmLevel) return;
             _lodFarm = farmLevel;
             // never re-arm taps on an island the player does not own
             if (_plotRaycaster != null) _plotRaycaster.enabled = farmLevel && !Locked;
-            for (int i = 0; i < _views.Length; i++)
-            {
-                var v = _views[i];
-                if (v == null) continue;
-                // the bars are readouts for the island being farmed; the bed art carries the state
-                if (v.bars != null && v.bars.gameObject.activeSelf != (farmLevel && v.sBars))
-                    v.bars.gameObject.SetActive(farmLevel && v.sBars);
-            }
         }
 
         public List<int> TickingPlots()

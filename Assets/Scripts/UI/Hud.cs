@@ -26,7 +26,7 @@ namespace LQFarm
         string _lastFrame = "?", _lastBadge = "?";
         Image _xpFill, _energyFill, _chestIcon;
         Text _chestCount;
-        RectTransform _missionChip, _energyChip;
+        RectTransform _missionChip, _energyChip, _missionDot;
 
         long _lastCoin = -1;
         string _lastMission = "";
@@ -222,6 +222,12 @@ namespace LQFarm
             b.targetGraphic = sbg;
             b.onClick.AddListener(() => app.Open(new MissionsPanel(app)));
             strip.gameObject.AddComponent<PressFx>();
+
+            // how many rewards wait on the board (any tab): a finished mission used to look exactly
+            // like one in progress until the player happened to open the board (owner, 15/9)
+            _missionDot = Dot(strip);
+            _missionDot.Anchor(UIKit.Right, new Vector2(-8, 0), new Vector2(26, 26));
+            _mission.rectTransform.Stretch(46, 0, 40, 0);
 
             BuildActionRow(app, cluster);
         }
@@ -486,7 +492,7 @@ namespace LQFarm
         }
 
         /// <summary>A count pinned to a button's corner.</summary>
-        static RectTransform Dot(RectTransform slot)
+        public static RectTransform Dot(RectTransform slot)
         {
             var dot = UIKit.Node("dot", slot);
             dot.Anchor(UIKit.TopRight, new Vector2(6, 6), new Vector2(26, 26));
@@ -497,7 +503,7 @@ namespace LQFarm
             return dot;
         }
 
-        static void SetDot(RectTransform dot, int n)
+        public static void SetDot(RectTransform dot, int n)
         {
             if (dot == null) return;
             bool on = n != 0;
@@ -911,9 +917,8 @@ namespace LQFarm
             foreach (var kv in GS.Local.seeds) seeds += kv.Value;
             bool needSeeds = seeds == 0 && _app != null && _app.Farm != null && _app.Farm.EmptyPlots().Count > 0;
 
-            int claimable = 0;
-            foreach (var m in GS.Local.contracts) if (!m.Empty && m.p >= m.need) claimable++;
-            if (GS.Local.ActiveMission(out var mp) is Task at && at != null && mp.p >= at.need) claimable++;
+            int claimable = GS.Local.ClaimableMissions;
+            SetDot(_missionDot, claimable);
 
             // enough XP and coins to level: the one upgrade nobody should sit on unaware of
             var s = GS.Local;

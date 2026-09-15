@@ -68,6 +68,17 @@ namespace LQFarm.EditorTools
             GameApp.I.StartCoroutine(UiAudit.RunAccount(GameApp.I));
         }
 
+        [MenuItem("Tools/LQ Farm/Chụp đảo sống")]
+        static void CaptureIslandsAlive()
+        {
+            if (!Application.isPlaying || GameApp.I == null)
+            {
+                EditorUtility.DisplayDialog("Cần đang chạy", "Bấm Play trước, rồi chạy lại lệnh này.", "OK");
+                return;
+            }
+            GameApp.I.StartCoroutine(UiAudit.RunIslandsAlive(GameApp.I));
+        }
+
         [MenuItem("Tools/LQ Farm/Chụp chuyển cảnh")]
         static void CaptureCinematic()
         {

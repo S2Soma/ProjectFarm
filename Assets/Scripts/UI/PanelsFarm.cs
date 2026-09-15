@@ -392,6 +392,7 @@ namespace LQFarm
         RectTransform _list, _chapterBar, _box;
         Text _chNum, _chName, _chDone, _streak;
         Action<int> _setTab;
+        readonly List<RectTransform> _tabDots = new List<RectTransform>();
 
         static int ActiveChapter()
         {
@@ -412,6 +413,12 @@ namespace LQFarm
             _setTab = UIKit.Tabs(tabs, new[] { "Đơn hàng", "Chương truyện", "Hằng ngày" },
                                  i => { _tab = i; Refresh(); }, 176, 46, 8);
             tabs.GetChild(0).GetComponent<RectTransform>().anchoredPosition = Vector2.zero;
+            // a red count on each tab that has a reward waiting, so a finished mission is findable
+            // without opening every tab (owner, 15/9)
+            foreach (Transform cell in tabs.GetChild(0))
+                if (cell.name == "tab") _tabDots.Add(Hud.Dot((RectTransform)cell));
+            // above the tab's top-right corner: at the Menu's 26 px / +6 the dot sat on "Chương truyện"
+            foreach (var d in _tabDots) { d.sizeDelta = new Vector2(22, 22); d.anchoredPosition = new Vector2(8, 17); }
 
             // Streak lives here and NOT on the HUD. Contracts bring a third countdown into a
             // game that already has weather (1 h) and tags (12 h), and three live clocks is one
@@ -458,6 +465,12 @@ namespace LQFarm
         public override void Refresh()
         {
             _setTab?.Invoke(_tab);
+            if (_tabDots.Count == 3)
+            {
+                Hud.SetDot(_tabDots[0], GS.Local.ClaimableContracts());
+                Hud.SetDot(_tabDots[1], GS.Local.ClaimableStory());
+                Hud.SetDot(_tabDots[2], GS.Local.ClaimableDaily());
+            }
             _chapterBar.gameObject.SetActive(_tab == 1);
             _box.offsetMax = new Vector2(0, _tab == 1 ? -122 : -58);
 

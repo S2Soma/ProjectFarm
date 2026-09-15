@@ -23,6 +23,7 @@ namespace LQFarm
         readonly GameApp _app;
         readonly RectTransform _layer;
         RectTransform _safe, _card, _body, _logo, _scene;
+        float _titleW, _logoFitFor = -1f;
         /// <summary>The scenery in four depth planes (sky · far cloud sea · island · near cloud sea),
         /// so the cinematic into the farm can push a camera through them with parallax.</summary>
         RectTransform _depthSky, _depthFar, _depthIsland, _depthNear;
@@ -30,6 +31,7 @@ namespace LQFarm
         Text _version;
         CanvasGroup _group, _bodyGroup;
         StartScreenFx _fx;
+        CloudMaterialOwner _cloudMats;
         Mode _mode;
         bool _disposed;
         bool _offlineOffered;
@@ -122,6 +124,7 @@ namespace LQFarm
         {
             _group = _layer.gameObject.AddComponent<CanvasGroup>();
             _fx = _layer.gameObject.AddComponent<StartScreenFx>();
+            _cloudMats = _layer.gameObject.AddComponent<CloudMaterialOwner>();
 
             _depthSky = Depth("depth_sky");
             _depthFar = Depth("depth_far");
@@ -151,6 +154,7 @@ namespace LQFarm
             cirrus.rectTransform.anchorMin = new Vector2(0f, 0.74f);
             cirrus.rectTransform.anchorMax = new Vector2(1f, 0.74f);
             cirrus.rectTransform.sizeDelta = new Vector2(0f, 120f);
+            DayCloud(cirrus, true, 0.0015f, CloudMaterials.BandNoise(5));
 
             // (sprite, anchor x, anchor y, width, alpha, drift px/s)
             var clouds = new (string art, float x, float y, float w, float a, float speed)[]
@@ -168,6 +172,7 @@ namespace LQFarm
                 float h = c.w * sp.rect.height / sp.rect.width;
                 im.rectTransform.Anchor(new Vector2(c.x, c.y), Vector2.zero, new Vector2(c.w, h));
                 im.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+                DayCloud(im, false, 0f, 1f / 110f);
                 _fx.clouds.Add((im.rectTransform, c.speed));
             }
 
@@ -216,6 +221,21 @@ namespace LQFarm
             im.rectTransform.pivot = new Vector2(0.5f, 0f);
             im.rectTransform.anchoredPosition = new Vector2(0f, bottom);
             im.rectTransform.sizeDelta = new Vector2(80f, height);
+            // the near sea rolls by faster than the far one
+            DayCloud(im, true, height > 300f ? 0.0045f : height > 200f ? 0.0025f : 0.0012f, CloudMaterials.BandNoise(height > 300f ? 7 : 10));
+        }
+
+        /// <summary>A cloud lit like the farm's sky at noon (the scene is always a clear day): the art's
+        /// grey is light, mapped from a cool shade to white, with its soft edge breathing
+        /// (<see cref="CloudMaterials"/>). A band scrolls by itself, from the shader's own clock.</summary>
+        void DayCloud(Image im, bool band, float drift, float noisePerTexel)
+        {
+            var mat = CloudMaterials.Cloud(_cloudMats, im.sprite, band,
+                new Vector4(band ? 0.5f : 0.45f, band ? 4f : 3f, noisePerTexel, 0.03f), new Vector4(0.08f, 0.96f, 0.05f, 0f));
+            if (mat == null) return;
+            CloudMaterials.Paint(mat, Color.white, Theme.Hex(band ? "#B4C8E6" : "#C3D4EE"), Theme.Hex("#FFF6DC").Alpha(0.3f));
+            mat.SetFloat(CloudMaterials.Drift, drift);
+            im.material = mat;
         }
 
         void BuildIsland()
@@ -254,7 +274,7 @@ namespace LQFarm
             // two of the pets, hopping now and then
             var pets = new (string id, float x, float y, float w, bool flip)[]
             {
-                ("mit",    80f, -14f, 118f, true),
+                ("shushi", 80f, -14f, 118f, true),
                 ("yummy", -126f, -34f, 104f, false),
             };
             foreach (var p in pets)
@@ -275,7 +295,10 @@ namespace LQFarm
         void BuildLogo()
         {
             _logo = UIKit.Node("logo", _safe);
-            _logo.Anchor(new Vector2(0.29f, 1f), new Vector2(0, -34), new Vector2(640, 150));
+            _logo.Anchor(new Vector2(0.29f, 1f), new Vector2(0, -34), new Vector2(640, 124));
+            // centred over the island. With pivot = anchor (0.29) the title sat 134 px right of the
+            // island, and on a 16:10 screen or a browser window its last letters went under the card.
+            _logo.pivot = new Vector2(0.5f, 1f);
 
             var title = UIKit.Label(_logo, Application.productName, 104, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold);
             title.rectTransform.Anchor(UIKit.Top, Vector2.zero, new Vector2(640, 118));
@@ -286,12 +309,30 @@ namespace LQFarm
             o2.effectColor = Theme.Hex("#8A4A0C"); o2.effectDistance = new Vector2(-2.5f, 2.5f);
             var sh = title.gameObject.AddComponent<Shadow>();
             sh.effectColor = new Color(0.1f, 0.2f, 0.35f, 0.35f); sh.effectDistance = new Vector2(0f, -8f);
+            // (the "Nông trại trên mây" ribbon under the title was removed on the owner's request, 15/9)
+            _titleW = title.preferredWidth + 12f;           // + the outlines
+            _fx.onResize = FitLogo;
+        }
 
-            var ribbon = UIKit.Node("ribbon", _logo);
-            ribbon.Anchor(UIKit.Top, new Vector2(0, -112), new Vector2(300, 40));
-            SurfaceLook.Add(ribbon, Looks.RibbonGreen, SurfaceLook.Pill);
-            var sub = UIKit.LabelOutlined(ribbon, "Nông trại trên mây", 20, Color.white, TextAnchor.MiddleCenter, Looks.RibbonGreen.inkLine);
-            sub.rectTransform.Stretch(10, 0, 10, 2);
+        /// <summary>Keeps the title clear of the card at any aspect: it stays centred over the island
+        /// when there is room, slides left when there is not, and shrinks only as a last resort. The
+        /// canvas is "Expand", so width is never below 1280 but a 16:10 or 4:3 screen has no more
+        /// than that, and the title is ~560 px wide.</summary>
+        void FitLogo(float width)
+        {
+            if (_disposed || _logo == null || _card == null || Mathf.Approximately(width, _logoFitFor)) return;
+            if (!_logo.gameObject.activeSelf) return;
+            _logoFitFor = width;
+            if (_safe != null && _safe.rect.width > 0f) width = _safe.rect.width;   // the logo and card live in the safe area
+            const float margin = 24f;
+            float right = width - 54f - CardW - margin;      // the card's left edge, less a margin
+            float room = right - margin;
+            float scale = Mathf.Min(1f, room / Mathf.Max(1f, _titleW));
+            float half = _titleW * scale * 0.5f;
+            float cx = Mathf.Clamp(0.29f * width, margin + half, right - half);
+            _logo.anchorMin = _logo.anchorMax = new Vector2(0f, 1f);
+            _logo.anchoredPosition = new Vector2(cx, -34f);
+            _logo.localScale = new Vector3(scale, scale, 1f);
         }
 
         void PlaceCard(bool wide)
@@ -299,6 +340,8 @@ namespace LQFarm
             if (wide) _card.Anchor(UIKit.Center, new Vector2(0, -8), new Vector2(880, 540));
             else _card.Anchor(UIKit.Right, new Vector2(-54, -6), new Vector2(CardW, CardH));
             if (_logo != null) _logo.gameObject.SetActive(!wide);
+            _logoFitFor = -1f;
+            if (_layer != null) FitLogo(_layer.rect.width);
         }
 
         // ================================================================
@@ -506,7 +549,7 @@ namespace LQFarm
             var disc = UIKit.Node("avatar", who);
             disc.Anchor(UIKit.Left, new Vector2(12, 0), new Vector2(70, 70));
             SurfaceLook.Add(disc, Looks.BtnCream, SurfaceLook.Pill);
-            var face = UIKit.Img(disc, Art.Load("Art/pets/mit/portrait"), Color.white, "pet");
+            var face = UIKit.Img(disc, Art.Load("Art/pets/shushi/portrait"), Color.white, "pet");
             face.preserveAspect = true;
             face.rectTransform.Stretch(6, 6, 6, 8);
             string name = sess == null ? "Chưa đăng nhập" : sess.Label;
@@ -721,6 +764,10 @@ namespace LQFarm
     public class StartScreenFx : MonoBehaviour
     {
         public RectTransform spin, bob, spinner;
+        /// <summary>Called with the layer width on the first frame and whenever it changes (a browser
+        /// window resized, a tablet rotated).</summary>
+        public System.Action<float> onResize;
+        float _width = -1f;
         public readonly List<(RectTransform rt, float speed)> clouds = new List<(RectTransform, float)>();
         public readonly List<RectTransform> sway = new List<RectTransform>();
         public readonly List<RectTransform> hops = new List<RectTransform>();
@@ -736,6 +783,7 @@ namespace LQFarm
 
             var host = (RectTransform)transform;
             float width = host.rect.width;
+            if (onResize != null && !Mathf.Approximately(width, _width)) { _width = width; onResize(width); }
             foreach (var (rt, speed) in clouds)
             {
                 if (rt == null) continue;

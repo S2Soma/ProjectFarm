@@ -9,8 +9,8 @@ namespace LQFarm
         public string id, name, blurb;
         /// <summary>0 Thường, 1 Hiếm, 2 Sử thi, 3 Huyền thoại.</summary>
         public int rarity;
-        /// <summary>The produce this pet likes best: a snack of it counts double in the pet book's
-        /// flavour line, and it is what the pet reaches for first when two are equally rare.</summary>
+        /// <summary>The produce this pet likes best. It eats ANY produce in the warehouse; its favourite
+        /// only weighs twice as much when it picks one (<see cref="PetSys.Appetite"/>).</summary>
         public string favourite;
 
         public PetDef(string id, string name, int rarity, string favourite, string blurb)
@@ -26,12 +26,13 @@ namespace LQFarm
         public bool water;
     }
 
-    /// <summary>Thú cưng: hatched from eggs, one follows the player and tends the farm.
+    /// <summary>Thú cưng: hatched from eggs, the active one lives on the farm and tends it.
     ///
-    /// Every <see cref="PatrolMs"/> the pet looks over every unlocked island for plots that are
-    /// thirsty or ripe, walks to them and does the job with the game's own <see cref="PlotLogic"/>
-    /// — so what a pet earns is exactly what the player would have earned tapping. Thirsty plots
-    /// come first: a watering window closes, a ripe crop waits.
+    /// Every <see cref="PatrolMs"/> the pet looks for plots that are thirsty or ripe on the island it
+    /// is standing on and the open islands nearest it by bridge, walks there (over the bridges, never
+    /// a teleport) and does the job with the game's own <see cref="PlotLogic"/> — so what a pet earns is
+    /// exactly what the player would have earned tapping. Nearer islands first, and on each island
+    /// thirsty plots before ripe ones: a watering window closes, a ripe crop waits.
     ///
     /// Now and then it helps itself to one piece of produce from the warehouse, and it has
     /// expensive taste: a mutated fruit is far more likely to go than a plain one. That is the
@@ -49,6 +50,11 @@ namespace LQFarm
         /// <summary>Eggs in a row without a Sử thi or better before the next one is guaranteed.</summary>
         public const int Pity = 40;
         public const float SnackChance = 0.35f;
+        /// <summary>A patrol looks this many bridges away from where the pet stands, at most. Islands are
+        /// 1670 apart and the pet walks: one hop is about nine seconds of walking.</summary>
+        public const int MaxPatrolHops = 2;
+        /// <summary>A patrol stops starting new jobs after this long, wherever it has got to.</summary>
+        public const float PatrolSeconds = 75f;
 
         public static readonly PetDef[] All =
         {
@@ -57,7 +63,7 @@ namespace LQFarm
             new PetDef("shushi",     "Shushi",     1, "watermelon", "Cái vòi dài tưới được cả ô bên cạnh. Ăn cũng nhiều như tưới."),
             new PetDef("yummy",      "Yummy",      1, "grape",      "Chiếc mai hoa hồng thơm phức, đi tới đâu vườn thơm tới đó."),
             new PetDef("tim",        "TiM",        2, "tomato",     "Rồng lửa nhỏ chạy nhanh nhất quần đảo. Thích đồ ăn nóng hổi."),
-            new PetDef("mit",        "MiT",        3, "pineapple",  "Linh vật của MATU Farm. Không cây nào chín mà thoát được mắt MiT."),
+            new PetDef("mit",        "MiT",        3, "pineapple",  "Linh vật của MATU FArM. Không cây nào chín mà thoát được mắt MiT."),
         };
 
         public static readonly string[] RarityName = { "Thường", "Hiếm", "Sử thi", "Huyền thoại" };
@@ -166,35 +172,54 @@ namespace LQFarm
         // ============================================================
         // the patrol
         // ============================================================
-        /// <summary>The jobs waiting on the farm, thirsty plots first, the island the player is
-        /// looking at first within each kind, up to <paramref name="max"/>.</summary>
-        public static List<PetJob> FindJobs(PlayerState s, int max, int preferIsland)
+        /// <summary>The jobs waiting within <paramref name="maxHops"/> bridges of <paramref name="fromIsland"/>, up
+        /// to <paramref name="max"/>: the pet's own island first, then the nearer islands (the lower index when
+        /// two are as near), and on each island thirsty plots before ripe ones. Never a locked island, and
+        /// never one past a locked island — the pet walks, and there is no bridge to walk.</summary>
+        public static List<PetJob> FindJobs(PlayerState s, int max, int fromIsland, int maxHops = MaxPatrolHops)
         {
-            var water = new List<PetJob>();
-            var harvest = new List<PetJob>();
-            for (int pass = 0; pass < 2; pass++)
-                for (int ii = 0; ii < s.islands.Count; ii++)
+            var jobs = new List<PetJob>(Mathf.Max(0, max));
+            if (max <= 0 || s.islands.Count == 0) return jobs;
+            fromIsland = Mathf.Clamp(fromIsland, 0, s.islands.Count - 1);
+            for (int hop = 0; hop <= maxHops && jobs.Count < max; hop++)
+                foreach (int ii in hop == 0 ? new[] { fromIsland } : new[] { fromIsland - hop, fromIsland + hop })
                 {
-                    // the preferred island in pass 0, every other island in pass 1
-                    if ((pass == 0) != (ii == preferIsland)) continue;
+                    if (!Reachable(s, fromIsland, ii)) continue;
                     var isl = s.islands[ii];
-                    if (!isl.unlocked) continue;
-                    for (int pi = 0; pi < isl.plots.Count && pi < GS.PlotCount; pi++)
-                    {
-                        var st = PlotLogic.State(isl.plots[pi]);
-                        if (st == PlotState.Thirsty) water.Add(new PetJob { island = ii, plot = pi, water = true });
-                        else if (st == PlotState.Ready) harvest.Add(new PetJob { island = ii, plot = pi, water = false });
-                    }
+                    for (int pass = 0; pass < 2 && jobs.Count < max; pass++)
+                        for (int pi = 0; pi < isl.plots.Count && pi < GS.PlotCount && jobs.Count < max; pi++)
+                        {
+                            var st = PlotLogic.State(isl.plots[pi]);
+                            if (pass == 0 && st == PlotState.Thirsty) jobs.Add(new PetJob { island = ii, plot = pi, water = true });
+                            else if (pass == 1 && st == PlotState.Ready) jobs.Add(new PetJob { island = ii, plot = pi, water = false });
+                        }
                 }
-            var jobs = new List<PetJob>(max);
-            foreach (var j in water) { if (jobs.Count >= max) break; jobs.Add(j); }
-            foreach (var j in harvest) { if (jobs.Count >= max) break; jobs.Add(j); }
             return jobs;
         }
 
-        /// <summary>How much a pet wants one piece of produce. A plain crop is 1; each mutation
-        /// tier multiplies it steeply (Lôi Điện is 200 times as tempting), a rarer seed a little,
-        /// and the pet's favourite crop doubles it.</summary>
+        /// <summary>Whether a pet on island <paramref name="from"/> can walk to island <paramref name="to"/>:
+        /// both open, and every island between them open (a trip crosses each one, gate to gate).</summary>
+        public static bool Reachable(PlayerState s, int from, int to)
+        {
+            if (from < 0 || to < 0 || from >= s.islands.Count || to >= s.islands.Count) return false;
+            int lo = Mathf.Min(from, to), hi = Mathf.Max(from, to);
+            for (int i = lo; i <= hi; i++) if (!s.islands[i].unlocked) return false;
+            return true;
+        }
+
+        /// <summary>Whether a job is still there to do — the player may have got to the plot first while the
+        /// pet was walking.</summary>
+        public static bool StillWanted(PlayerState s, PetJob j)
+        {
+            if (j.island < 0 || j.island >= s.islands.Count || !s.islands[j.island].unlocked) return false;
+            var plots = s.islands[j.island].plots;
+            if (j.plot < 0 || j.plot >= plots.Count) return false;
+            return PlotLogic.State(plots[j.plot]) == (j.water ? PlotState.Thirsty : PlotState.Ready);
+        }
+
+        /// <summary>How much a pet wants one piece of produce. Every crop is on the menu: a plain crop is 1;
+        /// each mutation tier multiplies it steeply (Lôi Điện is 200 times as tempting), a rarer seed a
+        /// little, and the pet's favourite crop doubles it — a preference, never a filter.</summary>
         public static float Appetite(PetDef pet, string cropId, int variant)
         {
             var seed = GameData.Get(cropId);

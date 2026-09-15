@@ -16,8 +16,11 @@ namespace LQFarm.EditorTools
         /// <summary>Bumping this makes Unity re-run the rule over every texture it touched, so a
         /// change here reaches existing art without anyone reimporting by hand. 2: mipmaps.
         /// 3: rings and circles (the HUD weather ring is always shown at half size).
-        /// 4: the bridge folder, and U-repeat on the bridge strip.</summary>
-        public override uint GetVersion() { return 4; }
+        /// 4: the bridge folder, and U-repeat on the bridge strip.
+        /// 5: the island ambience (life/, with repeat on its tile_ noise) and the snow caps (snow/).
+        /// 6: the ambience noise is linear data, not sRGB colour. 7: light masks (*_glow) keep their colour.
+        /// 8: the painted yard props (decor/, Tools/slice_decor.py).</summary>
+        public override uint GetVersion() { return 8; }
 
         /// <summary>Art that is drawn MINIFIED gets mipmaps.
         ///
@@ -32,7 +35,7 @@ namespace LQFarm.EditorTools
         /// without, since a trilinear blend there only softens it.</summary>
         static bool WantsMips(string path)
         {
-            string[] dirs = { "beds/", "islands/", "gen/", "farm/", "crops_gen/", "crop/", "items/", "tiles/", "bridge/", "fx/", "pets/" };
+            string[] dirs = { "beds/", "islands/", "gen/", "farm/", "crops_gen/", "crop/", "items/", "tiles/", "bridge/", "fx/", "pets/", "life/", "snow/", "decor/" };
             foreach (var d in dirs)
                 if (path.StartsWith(Root + d)) return true;
             // the arrival cinematic: the heaps and puffs start as specks and end larger than the
@@ -62,7 +65,9 @@ namespace LQFarm.EditorTools
             bool mips = WantsMips(assetPath);
             im.mipmapEnabled = mips;
             im.mipmapFilter = TextureImporterMipFilter.KaiserFilter;
-            im.alphaIsTransparency = true;
+            // A light mask (MiT/UI Glow) keeps its colour where alpha is 0: alpha there means "no sparkle",
+            // not "nothing", and dilating colour into it would spread the glow.
+            im.alphaIsTransparency = !assetPath.EndsWith("_glow.png");
             im.filterMode = mips ? FilterMode.Trilinear : FilterMode.Bilinear;
             im.wrapMode = TextureWrapMode.Clamp;
             // The bridge strip is laid along a path of any length by BridgeRibbon and repeats
@@ -71,6 +76,12 @@ namespace LQFarm.EditorTools
             {
                 im.wrapModeU = TextureWrapMode.Repeat;
                 im.wrapModeV = TextureWrapMode.Clamp;
+            }
+            // The ambience shaders scroll this noise without end (IslandLife, Shaders/UI*.shader).
+            if (assetPath.StartsWith(Root + "life/tile_"))
+            {
+                im.wrapMode = TextureWrapMode.Repeat;
+                im.sRGBTexture = false;           // data, not colour: the project renders in Linear space
             }
             im.maxTextureSize = 2048;
             im.textureCompression = TextureImporterCompression.Uncompressed;

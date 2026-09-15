@@ -321,26 +321,39 @@ namespace LQFarm
 
         static float Smooth01(float t) { return t * t * (3f - 2f * t); }
 
+        /// <summary>How far below the island's origin its field centre sits (IslandView.Build anchors the
+        /// field at (0, -26)). The gates, and so the bridges, are level with the field's centre.</summary>
+        public const float FieldY = -26f;
+
+        /// <summary>An island's field centre in archipelago units — the origin of its grid cells.</summary>
+        public static Vector2 FieldOrigin(int index) { return IslandOrigin(index) + new Vector2(0f, FieldY); }
+
+        /// <summary>The centreline of bridge <paramref name="to"/> (island to-1 → island to) at
+        /// <paramref name="t"/> in 0..1: from the landing on the lawn outside one gate to the landing outside
+        /// the next, level with both gates at the ends and sagging between the posts. The planks are laid on
+        /// exactly this curve, and a pet crossing walks on it (PetBridgePath).</summary>
+        public static Vector2 BridgeCentre(int to, float t)
+        {
+            float land = IslandView.BridgeLandX;
+            Vector2 a = FieldOrigin(to - 1) + new Vector2(land, 0f);
+            Vector2 b = FieldOrigin(to) + new Vector2(-land, 0f);
+            float y = Mathf.Lerp(a.y, b.y, Smooth01(t)) - Sag * Mathf.Sin(Mathf.PI * t);
+            return new Vector2(Mathf.Lerp(a.x, b.x, t), y);
+        }
+
         Bridge BuildBridge(int to)
         {
             var br = new Bridge();
             br.root = UIKit.Node("bridge" + to, _bridges);
             br.root.Anchor(UIKit.Center, Vector2.zero, Vector2.zero);
 
-            // Landing points on the lawn outside each gate. The gates are level with the field's
-            // centre, 26 below the island's origin.
-            float land = IslandView.BridgeLandX;
-            Vector2 a = IslandOrigin(to - 1) + new Vector2(land, -26f);
-            Vector2 b = IslandOrigin(to) + new Vector2(-land, -26f);
+            // Landing points on the lawn outside each gate.
+            Vector2 a = BridgeCentre(to, 0f);
+            Vector2 b = BridgeCentre(to, 1f);
             float span = b.x - a.x;
             int n = Mathf.Max(24, Mathf.CeilToInt(span / 12f)) + 1;
 
-            // the rope sags between the posts; the ends stay level with the gates
-            Vector2 At(float t)
-            {
-                float y = Mathf.Lerp(a.y, b.y, Smooth01(t)) - Sag * Mathf.Sin(Mathf.PI * t);
-                return new Vector2(Mathf.Lerp(a.x, b.x, t), y);
-            }
+            Vector2 At(float t) { return BridgeCentre(to, t); }
             var centre = new Vector2[n];
             for (int i = 0; i < n; i++) centre[i] = At(i / (float)(n - 1));
 
@@ -617,6 +630,7 @@ namespace LQFarm
         void LateUpdate()
         {
             FlickerAll();
+            StepLife();
             // The camera animates, so LOD has to follow it rather than only changing on input.
             if (Camera == null) return;
             bool farm = Camera.Ratio >= FarmLodRatio;
@@ -626,6 +640,41 @@ namespace LQFarm
         }
 
         bool _lodFarm = true;
+
+        // ============================================================
+        // ambient life
+        // ============================================================
+        /// <summary>The hour and the weather, for every island's ambience (IslandLife). SkyView calls it
+        /// whenever it repaints; it only sets shader globals and two statics, so it rebuilds nothing.</summary>
+        public void SetEnvironment(float night, Weather weather, float wind)
+        {
+            IslandLife.SetEnvironment(night, weather, wind);
+        }
+
+        /// <summary>Creatures move only on islands the player can see, close enough to see them: an island
+        /// off screen or a map pulled back past IslandLife.NearRatio switches its creature canvases off.
+        /// Everything else on an island moves in shaders and needs no step at all.</summary>
+        void StepLife()
+        {
+            if (Camera == null || _root == null) return;
+            float t = Time.unscaledTime, dt = Mathf.Min(Time.unscaledDeltaTime, 0.1f);
+            bool near = Camera.Ratio >= IslandLife.NearRatio;
+            var view = _root.rect.size * 0.5f;
+            float z = Mathf.Max(0.01f, Camera.Z);
+            var cam = Camera.Camera;
+            for (int i = 0; i < _islands.Count; i++)
+            {
+                bool on = near;
+                if (on)
+                {
+                    var o = IslandOrigin(i);
+                    float dx = Mathf.Abs(o.x - cam.x) * z;
+                    float dyTop = (o.y + 340f - cam.y) * z, dyBot = (o.y - 600f - cam.y) * z;
+                    on = dx < view.x + 740f * z && dyBot < view.y && dyTop > -view.y;
+                }
+                _islands[i].StepLife(t, dt, on);
+            }
+        }
 
         /// <summary>Extent of the whole row, in archipelago units.
         ///
@@ -719,12 +768,23 @@ namespace LQFarm
         /// <summary>Where the pet walks: above islands and bridges, in archipelago space.</summary>
         public RectTransform PetLayer { get; private set; }
 
-        /// <summary>A plot's centre in <see cref="PetLayer"/> space.</summary>
-        public Vector2 PetPosOfPlot(int island, int i)
+        /// <summary>A point of an island's grid (PetPaths cells) in <see cref="PetLayer"/> space.</summary>
+        public static Vector2 PetPosOfCell(int island, Vector2 cell)
         {
-            if (island < 0 || island >= _islands.Count || PetLayer == null) return Vector2.zero;
-            var root = _islands[island].PlotRoot(i);
-            return root != null ? (Vector2)PetLayer.InverseTransformPoint(root.position) : Vector2.zero;
+            return FieldOrigin(island) + IslandView.GridPoint(cell.x, cell.y);
+        }
+
+        /// <summary>Whether a point of the pet layer is on screen, give or take <paramref name="marginPx"/>
+        /// screen units — off screen the pet keeps walking but stops animating.</summary>
+        public bool PetOnScreen(Vector2 pos, float marginPx)
+        {
+            if (Camera == null || _root == null) return true;
+            var view = _root.rect.size * 0.5f;
+            float z = Mathf.Max(0.01f, Camera.Z);
+            var d = (pos - Camera.Camera) * z;
+            // the pet stands up from its feet: test its middle
+            d.y += PetActor.Height * 0.5f * z;
+            return Mathf.Abs(d.x) < view.x + marginPx && Mathf.Abs(d.y) < view.y + marginPx;
         }
 
         /// <summary>A plot the rain just watered: redraw it and let the drops fall.</summary>

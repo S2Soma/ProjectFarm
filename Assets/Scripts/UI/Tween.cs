@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -134,19 +135,38 @@ namespace LQFarm
             I.StartCoroutine(ShakeRoutine(target, amount, time));
         }
 
+        /// <summary>Shakes of one target share the position it had before the FIRST of them began.
+        /// Each used to remember wherever the target was when it started, so a shake started during
+        /// another one remembered a shaken offset and put the target back there: levelling up many
+        /// times in a row walked the whole HUD root down until the footer sat on the screen edge.</summary>
+        sealed class ShakeHome { public Vector2 pos; public int running; }
+        static readonly Dictionary<RectTransform, ShakeHome> s_shakeHomes = new Dictionary<RectTransform, ShakeHome>();
+
         static IEnumerator ShakeRoutine(RectTransform target, float amount, float time)
         {
-            Vector2 home = target.anchoredPosition;
-            for (float e = 0; e < time; e += Time.unscaledDeltaTime)
+            if (!s_shakeHomes.TryGetValue(target, out var home))
+                s_shakeHomes[target] = home = new ShakeHome { pos = target.anchoredPosition };
+            home.running++;
+            try
             {
-                if (target == null) yield break;
-                float k = 1f - e / time;
-                target.anchoredPosition = home + new Vector2(
-                    UnityEngine.Random.Range(-amount, amount) * k,
-                    UnityEngine.Random.Range(-amount, amount) * k);
-                yield return null;
+                for (float e = 0; e < time; e += Time.unscaledDeltaTime)
+                {
+                    if (target == null) yield break;
+                    float k = 1f - e / time;
+                    target.anchoredPosition = home.pos + new Vector2(
+                        UnityEngine.Random.Range(-amount, amount) * k,
+                        UnityEngine.Random.Range(-amount, amount) * k);
+                    yield return null;
+                }
             }
-            if (target != null) target.anchoredPosition = home;
+            finally
+            {
+                if (--home.running <= 0)
+                {
+                    s_shakeHomes.Remove(target);
+                    if (target != null) target.anchoredPosition = home.pos;
+                }
+            }
         }
 
         /// <summary>Stagger a pop-in across a container's children.</summary>

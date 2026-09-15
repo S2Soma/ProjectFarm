@@ -1,4 +1,4 @@
--- MATU Farm — bảng lưu tiến trình trên Supabase.
+-- MATU FArM — bảng lưu tiến trình trên Supabase.
 --
 -- Chạy MỘT LẦN: Supabase Dashboard ▸ SQL Editor ▸ New query ▸ dán cả file ▸ Run.
 -- Chạy lại cũng không sao (mọi lệnh đều "if not exists" / "or replace" / drop policy trước).

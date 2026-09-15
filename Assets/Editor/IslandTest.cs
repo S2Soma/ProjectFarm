@@ -33,6 +33,8 @@ namespace LQFarm.EditorTools
             PerksCompound(fails);
             BedsTouchInStraightRows(fails);
             SceneryStandsInsideTheFence(fails);
+            IslandLifeKeepsToTheYard(fails);
+            ThirstyPlotsShowTheDrop(fails);
 
             if (fails.Count == 0) Debug.Log("Đảo & ô đất OK — mọi bất biến đạt.");
             else
@@ -56,20 +58,145 @@ namespace LQFarm.EditorTools
                   "cầu mây không cập vào khoảng giữa cổng và mũi đảo");
             Check(fails, IslandView.GateCells * 2f * IslandView.StepY > 70f, "cổng quá hẹp cho cầu mây");
 
-            var yard = new List<(string art, float u, float v, float w)>(IslandView.Props);
-            foreach (var d in IslandView.Decor) yard.Add((d.art, d.u, d.v, d.w));
             foreach (var d in IslandView.Decor)
-                foreach (var p in IslandView.Props)
-                    Check(fails, Mathf.Max(Mathf.Abs(d.u - p.u), Mathf.Abs(d.v - p.v)) > 0.8f,
-                          $"đồ trang trí {d.id} đứng chồng lên {p.art}");
-            foreach (var p in yard)
             {
-                float reach = Mathf.Max(Mathf.Abs(p.u), Mathf.Abs(p.v));
-                Check(fails, reach < F - 0.2f, $"{p.art} ({p.u}, {p.v}) nằm ngoài hoặc sát hàng rào");
-                Check(fails, reach > 2.2f, $"{p.art} ({p.u}, {p.v}) đứng trên ô đất");
-                bool frontYard = p.u > 2f || p.v > 2f;
-                if (p.art != "rock" && p.art != "decor_roses") Check(fails, !frontYard, $"{p.art} cao mà đứng ở sân trước, sẽ che cây");
+                float reach = Mathf.Max(Mathf.Abs(d.u), Mathf.Abs(d.v));
+                Check(fails, reach < F - 0.2f && reach > 2.2f, $"đồ trang trí {d.id} ({d.u}, {d.v}) ngoài sân");
+                foreach (var p in IslandView.Places)
+                    if (p.style == IslandSys.Def(0).style)
+                        Check(fails, Mathf.Max(Mathf.Abs(d.u - p.u), Mathf.Abs(d.v - p.v)) > 0.8f,
+                              $"đồ trang trí {d.id} đứng chồng lên {p.art}");
             }
+        }
+
+        /// <summary>Every island's props (IslandView.Places) and swaying plants (IslandLife.PlantsFor) follow the yard
+        /// rules: inside the fence, off the beds (which on Đảo Nước reach the fence on two sides), not in the river,
+        /// clear of the bridges' gates, nothing tall in the front yard or in the top corner, no two props on one
+        /// island standing on each other — and every prop has its art (the recoloured skirt where the island's
+        /// ground is not grass, a light mask for the crystals) and its snow cap.</summary>
+        static void IslandLifeKeepsToTheYard(List<string> fails)
+        {
+            float F = IslandView.FenceCells;
+            var styles = new HashSet<int>();
+            for (int i = 0; i < IslandSys.Max; i++) styles.Add(IslandSys.Def(i).style);
+            foreach (var p in IslandView.Places)
+            {
+                string what = $"{p.art} (đảo tranh {p.style}, {p.u}, {p.v})";
+                Check(fails, styles.Contains(p.style), what + ": không đảo nào có tranh này");
+                float reach = Mathf.Max(Mathf.Abs(p.u), Mathf.Abs(p.v));
+                Check(fails, reach < F - 0.2f, what + " nằm ngoài hoặc sát hàng rào");
+                Check(fails, reach > 2.2f, what + " đứng trên ô đất");
+                Check(fails, Mathf.Abs(p.u + F) + Mathf.Abs(p.v - F) >= 1.1f && Mathf.Abs(p.u - F) + Mathf.Abs(p.v + F) >= 1.1f,
+                      what + " chắn cổng cầu");
+
+                string path = IslandView.SpritePath(p.art, p.style);
+                var sp = Art.Load(path);
+                Check(fails, sp != null, what + $": thiếu ảnh {path}");
+                IslandView.SplitArt(p.art, out var source, out var name);
+                if (source == "decor")
+                {
+                    Check(fails, DecorCatalog.All.ContainsKey(name), what + ": không có trong DecorCatalog (chạy lại Tools/slice_decor.py)");
+                    string ground = IslandView.GroundOf(p.style);
+                    if (ground != null && DecorCatalog.All.TryGetValue(name, out var e))
+                        Check(fails, path != "Art/decor/" + name || !e.skirt,
+                              what + $": đảo nền {ground} mà vật còn bãi cỏ xanh (thêm biến thể {ground} trong slice_decor.py)");
+                    if (DecorCatalog.All.TryGetValue(name, out var en))
+                        foreach (var l in en.lights)
+                            Check(fails, l.at.x >= 0f && l.at.x <= 1f && l.at.y >= 0f && l.at.y <= 1f, what + ": đèn nằm ngoài ảnh");
+                    if (DecorCatalog.All.TryGetValue(name, out var ek) && ek.skirt)
+                        Check(fails, Art.Load("Art/snow/" + name + "_skirt") != null, what + $": thiếu tuyết phủ bãi cỏ Art/snow/{name}_skirt (slice_decor.py)");
+                    if (DecorCatalog.All.TryGetValue(name, out var es) && es.spinSize > 0f)
+                        Check(fails, Art.Load("Art/decor/" + name + "_sails") != null, what + ": thiếu cánh quạt Art/decor/" + name + "_sails");
+                    if (name == "crystals" && sp != null)
+                        Check(fails, Art.Load("Art/decor/" + sp.name + "_glow") != null, what + ": thiếu mặt nạ sáng " + sp.name + "_glow");
+                }
+                // snow settles on everything but the vents (too hot) and the pines (snow painted on)
+                if (name != "vent" && name != "pine")
+                    Check(fails, Art.Load("Art/snow/" + name + "_snow") != null, what + $": thiếu mũ tuyết Art/snow/{name}_snow (Tools/gen_snow.py)");
+
+                float h = sp != null ? p.w * sp.rect.height / sp.rect.width : 0f;
+                bool frontYard = p.u > 2f || p.v > 2f;
+                Check(fails, !frontYard || (p.low && h <= 80f), what + $" cao {h:0} mà đứng ở sân trước, sẽ che cây");
+                Check(fails, !(p.u < -1.6f && p.v < -1.6f) || h <= 110f, what + $" cao {h:0} ở góc trên, màn 16:9 cắt mất");
+
+                foreach (var q in IslandView.Places)
+                {
+                    if (q.style != p.style || (q.u == p.u && q.v == p.v && q.art == p.art)) continue;
+                    Check(fails, Mathf.Max(Mathf.Abs(p.u - q.u), Mathf.Abs(p.v - q.v)) >= 0.75f, what + $" đứng chồng lên {q.art}");
+                }
+            }
+            for (int i = 0; i < IslandSys.Max; i++)
+            {
+                var def = IslandSys.Def(i);
+                if (def.layout != IslandLayout.River) continue;
+                foreach (var p in IslandView.Places)
+                {
+                    if (p.style != def.style) continue;
+                    Check(fails, Mathf.Abs(p.v) >= IslandSys.RiverHalf + 0.25f, $"{def.name}: {p.art} đứng dưới sông");
+                    Check(fails, !(Mathf.Abs(p.v) > 1.8f && Mathf.Abs(p.u) < 2.2f), $"{def.name}: {p.art} đứng trên ô bờ sông");
+                }
+            }
+            // PropsOn (pets walk round it) mirrors odd islands exactly as the scenery is drawn
+            for (int i = 0; i < IslandSys.Max; i++)
+            {
+                var def = IslandSys.Def(i);
+                var on = IslandView.PropsOn(i);
+                int n = 0;
+                foreach (var p in IslandView.Places) if (p.style == def.style) n++;
+                Check(fails, on.Count == n + (i == 0 ? IslandView.Decor.Length : 0), $"{def.name}: PropsOn trả {on.Count} vật, bảng có {n}");
+                bool mirror = (i & 1) == 1 && def.layout != IslandLayout.River;
+                foreach (var pr in on)
+                {
+                    var world = IslandView.GridPoint(pr.cell.x, pr.cell.y);
+                    bool found = false;
+                    foreach (var p in IslandView.Places)
+                    {
+                        if (p.style != def.style || p.art != pr.art) continue;
+                        var at = IslandView.GridPoint(p.u, p.v);
+                        if (mirror) at.x = -at.x;
+                        if ((at - world).sqrMagnitude < 0.01f) found = true;
+                    }
+                    if (!pr.art.StartsWith("decor_")) Check(fails, found, $"{def.name}: PropsOn lệch vị trí {pr.art}");
+                    Check(fails, pr.radius > 0f && pr.radius < 1f, $"{def.name}: bán kính {pr.art} = {pr.radius:0.00} ô");
+                }
+            }
+
+            for (int i = 0; i < IslandSys.Max; i++)
+            {
+                var def = IslandSys.Def(i);
+                bool river = def.layout == IslandLayout.River;
+                foreach (var pl in IslandLife.PlantsFor(i))
+                {
+                    float reach = Mathf.Max(Mathf.Abs(pl.u), Mathf.Abs(pl.v));
+                    string what = $"{def.name}: cây ({pl.u:0.00}, {pl.v:0.00})";
+                    Check(fails, reach < F - 0.12f, what + " nằm ngoài hàng rào");
+                    Check(fails, reach > 2.1f || (river && Mathf.Abs(pl.u) > 2.05f), what + " mọc trên ô đất");
+                    if (river)
+                    {
+                        Check(fails, !(Mathf.Abs(pl.v) > 0.45f && Mathf.Abs(pl.v) < 2.55f && Mathf.Abs(pl.u) < 2.05f), what + " mọc trên ô bờ sông");
+                        float mean = IslandLife.Meander(pl.u);
+                        Check(fails, Mathf.Abs(pl.v - mean) > IslandLife.RiverBand + 0.1f, what + " mọc giữa dòng sông");
+                    }
+                    bool frontYard = pl.u > 2f || pl.v > 2f;
+                    Check(fails, pl.height <= 80f || !frontYard, what + $" cao {pl.height:0} mà ở sân trước");
+                    Check(fails, Mathf.Abs(pl.u + F) + Mathf.Abs(pl.v - F) >= 1.0f && Mathf.Abs(pl.u - F) + Mathf.Abs(pl.v + F) >= 1.0f,
+                          what + " chắn cổng cầu");
+                }
+            }
+        }
+
+        /// <summary>The thirsty signal (owner, 15/9): the drop stands inside its plot, off the crop's base and in front
+        /// of it, and its art and shaders are all there — a missing shader would silently draw nothing.</summary>
+        static void ThirstyPlotsShowTheDrop(List<string> fails)
+        {
+            var f = IslandView.ThirstFoot;
+            float k = Mathf.Abs(f.x) / (IslandView.TW * 0.5f) + Mathf.Abs(f.y) / (IslandView.TH * 0.5f);
+            Check(fails, k < 0.9f, $"giọt nước khát ({f}) nằm ra ngoài ô đất (k = {k:0.00})");
+            Check(fails, f.y < -8f, "giọt nước khát đứng sau gốc cây: cây sẽ che nó");
+            Check(fails, Mathf.Abs(f.x) > 24f, "giọt nước khát đứng ngay gốc cây");
+            Check(fails, Resources.Load<Shader>("Shaders/UIThirst") != null, "thiếu shader MiT/UI Thirst");
+            Check(fails, Resources.Load<Shader>("Shaders/UIThirstRim") != null, "thiếu shader MiT/UI Thirst Rim");
+            Check(fails, Art.Load("Art/beds/thirst_badge") != null && Art.Load("Art/beds/bed_glow_thirst") != null, "thiếu ảnh thirst_badge / bed_glow_thirst");
         }
 
         static PlayerState Fresh(int lv = 1)

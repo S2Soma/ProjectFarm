@@ -180,9 +180,10 @@ def bed(palette, seed, wet=False, gold=False, dry=False):
         base = mix(base, base * 1.12 + np.array([14, 10, 0], np.float32), glow * 0.5)
 
     if dry:
-        # Parched: paler, dustier soil split by a crack network. This is the whole "needs water"
-        # signal now — it used to be a droplet badge standing on top of the crop.
-        base = mix(base, np.array([176, 138, 98], np.float32), 0.42)
+        # Parched: paler, dustier soil split by a crack network. Owner, 15/9: the first version was too
+        # faint to say "needs water" on its own — the cracks are now wider and darker, and the plates
+        # paler. The water-drop badge (thirst_badge, IslandView) carries the signal; this is its echo.
+        base = mix(base, np.array([184, 146, 104], np.float32), 0.50)
         # Voronoi plates in the bed's own iso space: a crack is where the nearest and second
         # nearest plate centres are almost equally far — straight-ish polygon edges, which is
         # what dried mud actually does (noise isolines read as contour lines on a map).
@@ -195,10 +196,10 @@ def bed(palette, seed, wet=False, gold=False, dry=False):
             nd2 = np.where(dd < d1, d1, np.minimum(d2, dd))
             d1 = np.minimum(d1, dd); d2 = nd2
         gap = d2 - d1
-        crack = gap < 0.0065
-        lip_hi = (gap >= 0.0065) & (gap < 0.013)
-        base = np.where((crack & top)[..., None], base * 0.50, base)
-        base = np.where((lip_hi & top)[..., None], mix(base, base * 1.14, 0.7), base)
+        crack = gap < 0.0085
+        lip_hi = (gap >= 0.0085) & (gap < 0.017)
+        base = np.where((crack & top)[..., None], base * 0.38, base)
+        base = np.where((lip_hi & top)[..., None], mix(base, base * 1.16, 0.75), base)
         # plates curl up a little at their edges and darken toward their centres
         base = mix(base, base * 0.92, np.clip(gap / 0.08, 0, 1) * 0.5)
 
@@ -327,6 +328,100 @@ def selection():
     return Image.fromarray(out, "RGBA").resize((W, H), Image.LANCZOS)
 
 
+def thirst_rim():
+    """The thirsty bed's rim light, stronger than the ripe one's: a saturated water-blue band with a
+    bright core line and a soft glow spilling past the bed's edge. MiT/UI Thirst Rim pulses it and runs
+    two highlights round it, so a thirsty field is noticed from the corner of the eye."""
+    x, y, dx, dy, u, s, t = field()
+    c = BED - LIP * 0.5
+    band = np.clip(1.0 - np.abs(u - c) / 0.075, 0, 1) ** 1.2
+    core = np.clip(1.0 - np.abs(u - c) / 0.016, 0, 1)
+    spill = np.clip(1.0 - np.abs(u - (c + 0.05)) / 0.16, 0, 1) ** 2 * 0.45
+    inner = np.clip(1.0 - u / BED, 0, 1) ** 2.2 * 0.16 * (u <= BED)
+    alpha = np.clip(np.maximum(band, spill) + inner, 0, 1)
+    rgb = np.zeros(u.shape + (3,), np.float32)
+    rgb[:] = np.array([64, 184, 255], np.float32)
+    rgb = mix(rgb, np.array([226, 248, 255], np.float32), core)
+    out = np.dstack([rgb, alpha * 255]).astype(np.uint8)
+    return Image.fromarray(out, "RGBA").resize((W, H), Image.LANCZOS)
+
+
+def _teardrop(cx, bottom, h, w, n=160):
+    """A water drop standing on (cx, bottom): round below, pointed above."""
+    pts = []
+    for k in range(n):
+        a = k / n * math.tau
+        px_ = math.sin(a) * math.sin(a / 2.0)
+        py_ = math.cos(a)                               # 1 at the tip, -1 at the bottom
+        pts.append((cx + px_ * (w / 2.0) / 0.7698, bottom - (py_ + 1.0) * h / 2.0))
+    return pts
+
+
+def thirst_badge():
+    """Art/beds/thirst_badge.png, three 256 px cells for MiT/UI Thirst (IslandView's thirsty badge):
+       0 the drop: painted water drop, white rim, dark outline — stands on the bottom of the cell
+       1 a ripple ring on the ground (iso ellipse), expanding and fading in the shader
+       2 a soft contact shadow, shrinking as the drop hops"""
+    C, S4 = 256, 4
+    img = Image.new("RGBA", (C * 3, C), (0, 0, 0, 0))
+
+    # ---- 0: the drop ----
+    big = Image.new("RGBA", (C * S4, C * S4), (0, 0, 0, 0))
+    def layer(pts, fill):
+        m = Image.new("L", big.size, 0)
+        ImageDraw.Draw(m).polygon([(px_ * S4, py_ * S4) for px_, py_ in pts], fill=255)
+        col = Image.new("RGBA", big.size, fill)
+        big.paste(col, (0, 0), m)
+        return m
+    cx, bottom = C / 2.0, 244.0
+    halo = Image.new("L", big.size, 0)
+    ImageDraw.Draw(halo).polygon([(px_ * S4, py_ * S4) for px_, py_ in _teardrop(cx, bottom + 2, 214, 166)], fill=150)
+    halo = halo.filter(ImageFilter.GaussianBlur(6 * S4))
+    shade = Image.new("RGBA", big.size, (10, 30, 60, 255)); shade.putalpha(halo)
+    big.alpha_composite(shade)
+    layer(_teardrop(cx, bottom, 206, 158), (22, 56, 104, 255))           # outline
+    layer(_teardrop(cx, bottom - 7, 190, 142), (248, 252, 255, 255))     # white rim
+    body = layer(_teardrop(cx, bottom - 17, 166, 118), (0, 0, 0, 255))
+    # body: vertical gradient, darker toward the lower right
+    ys, xs = np.mgrid[0:C * S4, 0:C * S4].astype(np.float32) / S4
+    top_c, bot_c = hexc("#9AE6FF"), hexc("#2386E4")
+    tt = np.clip((ys - 70) / 150.0, 0, 1)[..., None]
+    grad = top_c * (1 - tt) + bot_c * tt
+    lr = np.clip(((xs - cx) * 0.8 + (ys - 170) * 0.6) / 70.0, 0, 1)[..., None] ** 1.5
+    grad = grad * (1 - lr * 0.35) + hexc("#135BAE") * (lr * 0.35)
+    bm = np.asarray(body, np.float32) / 255.0
+    arr = np.asarray(big).astype(np.float32)
+    arr[..., :3] = arr[..., :3] * (1 - bm[..., None]) + grad * bm[..., None]
+    big = Image.fromarray(arr.astype(np.uint8), "RGBA")
+    # gloss: a tilted highlight up-left and a small dot
+    gl = Image.new("L", big.size, 0)
+    dg = ImageDraw.Draw(gl)
+    dg.ellipse(((cx - 40) * S4, 130 * S4, (cx - 14) * S4, 196 * S4), fill=220)
+    dg.ellipse(((cx - 16) * S4, 104 * S4, (cx - 2) * S4, 120 * S4), fill=235)
+    gl = gl.filter(ImageFilter.GaussianBlur(1.5 * S4))
+    gl = Image.fromarray((np.asarray(gl, np.float32) * bm).astype(np.uint8))
+    white = Image.new("RGBA", big.size, (255, 255, 255, 255)); white.putalpha(gl)
+    big.alpha_composite(white)
+    img.alpha_composite(big.resize((C, C), Image.LANCZOS), (0, 0))
+
+    # ---- 1: ripple ring ----
+    ring = Image.new("L", (C * S4, C * S4), 0)
+    dr = ImageDraw.Draw(ring)
+    rx, ry, th = 104, 52, 9
+    dr.ellipse(((C / 2 - rx) * S4, (C / 2 - ry) * S4, (C / 2 + rx) * S4, (C / 2 + ry) * S4), outline=255, width=th * S4)
+    ring = ring.filter(ImageFilter.GaussianBlur(2.2 * S4)).resize((C, C), Image.LANCZOS)
+    rc = Image.new("RGBA", (C, C), (190, 238, 255, 255)); rc.putalpha(ring)
+    img.alpha_composite(rc, (C, 0))
+
+    # ---- 2: contact shadow ----
+    sh = Image.new("L", (C, C), 0)
+    ImageDraw.Draw(sh).ellipse((C / 2 - 70, C / 2 - 30, C / 2 + 70, C / 2 + 30), fill=170)
+    sh = sh.filter(ImageFilter.GaussianBlur(14))
+    sc = Image.new("RGBA", (C, C), (14, 32, 58, 255)); sc.putalpha(sh)
+    img.alpha_composite(sc, (C * 2, 0))
+    return img
+
+
 SOIL = dict(
     soil_hi=hexc("#9A6440"), soil_lo=hexc("#6E4329"),
     furrow_hi=hexc("#5A3A24"), furrow_lo=hexc("#3F2818"),
@@ -350,6 +445,10 @@ if __name__ == "__main__":
     locked(5, with_lock=False).save(os.path.join(OUT, "bed_unclaimed.png"))
     selection().save(os.path.join(OUT, "bed_select.png"))
     rim_glow((255, 214, 90)).save(os.path.join(OUT, "bed_glow_ready.png"))
-    rim_glow((120, 206, 255)).save(os.path.join(OUT, "bed_glow_water.png"))
     sparkles(3).save(os.path.join(OUT, "bed_sparkle.png"))
+    thirst_rim().save(os.path.join(OUT, "bed_glow_thirst.png"))
+    badge = thirst_badge()
+    badge.save(os.path.join(OUT, "thirst_badge.png"))
+    # the drop alone, for pages that show the thirsty bed as a picture (Menu ▸ Hướng dẫn chơi)
+    badge.crop((0, 0, 256, 256)).save(os.path.join(OUT, "thirst_drop.png"))
     print("locked")
