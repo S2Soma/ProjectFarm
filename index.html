@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes, viewport-fit=cover">
+    <meta name="theme-color" content="#3E9FE0">
+    <!-- "Thêm vào MH chính" opens the game without browser bars: the only full screen iPhone has -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="MATU FArM">
+    <title>MATU FArM</title>
+    <link rel="manifest" href="TemplateData/manifest.webmanifest">
+    <link rel="icon" type="image/png" href="TemplateData/favicon.png">
+    <link rel="apple-touch-icon" href="TemplateData/icon.png">
+    <link rel="stylesheet" href="TemplateData/style.css">
+    <!-- The event's look (Hội Trăng Rằm, the weekend's Lễ hội Làng Mây): landing.js is the game's own calendar, written by every web build
+         (Assets/Editor/LandingWeb.cs), landing-theme.js the game's rule (Core/LandingTheme.cs). No landing.js: the everyday page. -->
+    <script src="TemplateData/landing.js"></script>
+    <script src="TemplateData/landing-theme.js"></script>
+    <script>
+      // decided before the first paint, so an event's page never flashes the day's sky; ?theme=moon|festival|default and ?at=<UTC ms> to look
+      (function () {
+        var L = window.MatuLanding, D = window.MATU_LANDING;
+        if (!L || !D) return;
+        L.recall(D);   // Hội Trăng Rằm's window as the server last had it (the game remembers it: localStorage "matu.moonwin")
+        var qs = location.search;
+        var pin = /[?&]theme=(moon|festival|default)(&|$)/.exec(qs), at = /[?&]at=(\d+)(&|$)/.exec(qs);
+        var ms = at ? Number(at[1]) : Date.now();
+        var t = pin ? L.force(D, pin[1], ms) : L.decide(D, ms);
+        if (t.kind === "default") return;
+        var root = document.documentElement, colors = (D.colors && D.colors[t.kind]) || {};
+        root.setAttribute("data-landing", t.kind);
+        if (t.kind === "moon" && L.moonPhase(D, t, ms)) root.setAttribute("data-moon", L.moonPhase(D, t, ms));
+        for (var k in colors) root.style.setProperty("--lp-" + k, colors[k]);
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta && t.kind === "moon" && colors.skyTop) meta.setAttribute("content", colors.skyTop);
+        window.MatuLandingNow = { kind: t.kind, ribbon: L.ribbon(D, t, ms) };
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="game">
+      <canvas id="unity-canvas" tabindex="-1"></canvas>
+
+      <div id="loading">
+        <img id="loading-icon" src="TemplateData/icon.png" alt="">
+        <div id="loading-title">MATU FArM</div>
+        <div id="bar"><div id="bar-fill"></div></div>
+        <div id="loading-note">Đang tải nông trại…</div>
+      </div>
+
+      <!-- phones: offered once the game has loaded (a tap is required to go full screen) -->
+      <div id="fs-prompt" hidden>
+        <div class="fs-card">
+          <div class="fs-glyph" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          <div class="fs-title">Chơi toàn màn hình</div>
+          <div class="fs-text">Ẩn thanh trình duyệt để nông trại rộng hết màn hình.</div>
+          <button id="fs-go" type="button">Toàn màn hình</button>
+          <button id="fs-later" type="button" class="fs-link">Để sau</button>
+        </div>
+      </div>
+
+      <!-- iPhone Safari has no page full screen: explain the home-screen icon instead, once -->
+      <div id="ios-hint" hidden>
+        <div class="fs-card">
+          <div class="fs-title">Chơi toàn màn hình trên iPhone</div>
+          <div class="fs-text">Chạm nút <b>Chia sẻ</b> của Safari rồi chọn <b>Thêm vào MH chính</b>.
+            Mở game từ biểu tượng đó sẽ không còn thanh trình duyệt.</div>
+          <button id="ios-ok" type="button">Đã hiểu</button>
+        </div>
+      </div>
+
+      <div id="rotate">
+        <div class="rotate-phone"></div>
+        <div>Xoay ngang điện thoại để chơi</div>
+      </div>
+
+      <div id="error" hidden></div>
+    </div>
+
+    <script>
+      // ---- full screen, shared by the card below and the in-game button (Plugins/WebGL/MatuFullscreen.jslib) ----
+      window.MatuFullscreen = (function () {
+        var doc = document, root = document.documentElement;
+        var retryArmed = false;
+
+        function request() { return root.requestFullscreen || root.webkitRequestFullscreen; }
+        function available() {
+          return !!request() && doc.fullscreenEnabled !== false && doc.webkitFullscreenEnabled !== false;
+        }
+        function isOn() { return !!(doc.fullscreenElement || doc.webkitFullscreenElement); }
+        function standalone() {
+          try {
+            return window.matchMedia("(display-mode: fullscreen)").matches ||
+                   window.matchMedia("(display-mode: standalone)").matches ||
+                   window.navigator.standalone === true;
+          } catch (e) { return false; }
+        }
+        function lockLandscape() {
+          try {
+            if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(function () {});
+          } catch (e) {}
+        }
+        // A request made outside a recent tap is refused; try once more on the next tap anywhere.
+        function retryOnNextTap() {
+          if (retryArmed) return;
+          retryArmed = true;
+          var once = function () {
+            doc.removeEventListener("pointerup", once, true);
+            doc.removeEventListener("touchend", once, true);
+            retryArmed = false;
+            if (!isOn()) enter(true);
+          };
+          doc.addEventListener("pointerup", once, true);
+          doc.addEventListener("touchend", once, true);
+        }
+        function enter(isRetry) {
+          var req = request();
+          if (!req || isOn()) return;
+          try {
+            var p = req.call(root, { navigationUI: "hide" });
+            if (p && p.then) p.then(lockLandscape).catch(function () { if (!isRetry) retryOnNextTap(); });
+            else lockLandscape();
+          } catch (e) { if (!isRetry) retryOnNextTap(); }
+        }
+        function exit() {
+          var ex = doc.exitFullscreen || doc.webkitExitFullscreen;
+          if (!ex || !isOn()) return;
+          try { var p = ex.call(doc); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+        }
+        return {
+          available: available, isOn: isOn, standalone: standalone,
+          enter: function () { enter(false); }, exit: exit,
+          toggle: function () { if (isOn()) exit(); else enter(false); },
+        };
+      })();
+
+      var canvas = document.querySelector("#unity-canvas");
+      var errorBox = document.querySelector("#error");
+
+      function showBanner(msg, type) {
+        if (type !== "error") { console.warn(msg); return; }
+        errorBox.textContent = msg;
+        errorBox.hidden = false;
+      }
+
+      var buildUrl = "Build";
+      var loaderUrl = buildUrl + "/MATUFarm.loader.js";
+      var config = {
+        arguments: [],
+        dataUrl: buildUrl + "/MATUFarm.data.unityweb",
+        frameworkUrl: buildUrl + "/MATUFarm.framework.js.unityweb",
+        codeUrl: buildUrl + "/MATUFarm.wasm.unityweb",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "DefaultCompany",
+        productName: "MATU FArM",
+        productVersion: "1.0",
+        showBanner: showBanner,
+        // The farm is saved to Application.persistentDataPath (lqfarm.save.json). Without this the
+        // file lives only in memory and a page reload starts a new farm.
+        autoSyncPersistentDataPath: true,
+      };
+
+      // Phones: render at most 2x — a 3x canvas of a UI-heavy scene costs more than it shows.
+      var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+                     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);   // iPadOS reports a Mac
+      var isIPhone = /iPhone|iPod/i.test(navigator.userAgent);
+      if (isMobile) {
+        document.body.classList.add("mobile");
+        config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      }
+
+      function remembered(key) { try { return localStorage.getItem(key) === "1"; } catch (e) { return false; } }
+      function remember(key) { try { localStorage.setItem(key, "1"); } catch (e) {} }
+
+      // After loading, on a phone that is still inside the browser: offer full screen once per visit,
+      // or on iPhone explain the home-screen icon (once, ever). Desktop has the in-game button.
+      function offerFullscreen() {
+        var fs = window.MatuFullscreen;
+        if (!isMobile || fs.standalone() || fs.isOn()) return;
+        if (fs.available()) {
+          var card = document.querySelector("#fs-prompt");
+          card.hidden = false;
+          document.querySelector("#fs-go").onclick = function () { card.hidden = true; fs.enter(); canvas.focus(); };
+          document.querySelector("#fs-later").onclick = function () { card.hidden = true; canvas.focus(); };
+        } else if (isIPhone && !remembered("matu.iosFullscreenHint")) {
+          var hint = document.querySelector("#ios-hint");
+          hint.hidden = false;
+          document.querySelector("#ios-ok").onclick = function () { hint.hidden = true; remember("matu.iosFullscreenHint"); canvas.focus(); };
+        }
+      }
+
+      // The event's dressing, inside the loading screen so it fades out with it: the owner's own art (TemplateData/landing/*.png, cut by
+      // the build from the game's), moved by CSS only. Nothing here runs on an ordinary day.
+      function dressLanding() {
+        var now = window.MatuLandingNow, loading = document.querySelector("#loading");
+        if (!now || !loading) return;
+        var sky = document.createElement("div");
+        sky.id = "lp-sky";
+        sky.setAttribute("aria-hidden", "true");
+        loading.insertBefore(sky, loading.firstChild);
+        var seed = 20260925;
+        function rnd() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+        function el(tag, cls, parent) { var e = document.createElement(tag); if (cls) e.className = cls; (parent || sky).appendChild(e); return e; }
+        function art(cls, file, parent) { var i = el("img", cls, parent); i.alt = ""; i.src = "TemplateData/landing/" + file + ".png"; return i; }
+        if (now.kind === "moon") {
+          for (var s = 0; s < 48; s++) {
+            var st = el("div", "lp-star"), z = (1.4 + rnd() * 2.4).toFixed(1) + "px";
+            st.style.left = (rnd() * 100).toFixed(2) + "%";
+            st.style.top = (Math.pow(rnd(), 1.5) * 62).toFixed(2) + "%";
+            st.style.width = st.style.height = z;
+            st.style.opacity = (0.45 + rnd() * 0.55).toFixed(2);
+            st.style.animationDuration = (2.2 + rnd() * 2.8).toFixed(2) + "s";
+            st.style.animationDelay = (-rnd() * 5).toFixed(2) + "s";
+          }
+          var moon = el("div", "lp-moonbox");
+          el("div", "lp-moon-halo", moon);
+          art("lp-moon", "moon", moon);
+          // sky lanterns rising from the clouds: [art, left %, width vmin, seconds to rise, drift vw]
+          [["sky_a", 4, 4.2, 34, 5], ["sky_b", 13, 3.0, 42, -3], ["sky_a", 23, 5.2, 29, 4], ["sky_b", 34, 3.4, 38, 6],
+           ["sky_a", 46, 2.6, 46, -4], ["sky_b", 57, 4.6, 31, 3], ["sky_a", 66, 3.1, 40, -5], ["sky_b", 76, 5.6, 27, 4],
+           ["sky_a", 86, 3.6, 36, -3], ["sky_b", 95, 4.0, 33, -6]].forEach(function (l, i) {
+            var r = art("lp-rise", l[0]);
+            r.style.left = l[1] + "%";
+            r.style.width = l[2] + "vmin";
+            r.style.setProperty("--lp-dx", l[4] + "vw");
+            r.style.animationDuration = l[3] + "s";
+            r.style.animationDelay = (-(i * 0.37 % 1) * l[3]).toFixed(1) + "s";
+          });
+          // lanterns hung from the top of the page, swaying: [art, side, offset %, width vmin, cord vh, seconds]
+          [["lantern_star", "left", 4, 8.5, 5, 3.4], ["lantern_round", "left", 13, 7.0, 13, 4.1], ["lantern_rabbit", "right", 3, 7.2, 9, 3.8]]
+            .forEach(function (h) {
+              var box = el("div", "lp-hang");
+              box.style[h[1]] = h[2] + "%";
+              box.style.width = h[3] + "vmin";
+              box.style.animationDuration = h[5] + "s";
+              el("div", "lp-cord", box).style.height = h[4] + "vh";
+              var lantern = el("div", "lp-lantern", box);
+              el("div", "lp-hang-glow", lantern);
+              art("lp-hang-art", h[0], lantern);
+            });
+        } else {
+          // the weekend's balloons drifting across the day sky: [design, top %, width vmin, seconds to cross]
+          [[1, 9, 4.0, 96], [3, 17, 5.6, 80], [0, 26, 3.2, 120], [2, 6, 6.8, 70], [3, 36, 2.8, 140], [1, 30, 5.0, 88], [0, 13, 7.6, 64]]
+            .forEach(function (b, i) {
+              var d = art("lp-drift", "balloon_" + b[0]);
+              d.style.top = b[1] + "%";
+              d.style.width = b[2] + "vmin";
+              d.style.animationDuration = b[3] + "s";
+              d.style.animationDelay = (-(i * 0.43 % 1) * b[3]).toFixed(1) + "s";
+            });
+        }
+        // the event's one line (the game's own words: LandingTheme.Ribbon), a ribbon at the top — never a slogan under the title
+        if (now.ribbon) {
+          var chip = el("div", "", loading);
+          chip.id = "lp-chip";
+          art("", now.kind === "moon" ? "icon_lantern" : "icon_balloon", chip);
+          el("span", "", chip).textContent = now.ribbon;
+        }
+      }
+      dressLanding();
+
+      document.querySelector("#loading").style.display = "flex";
+
+      var script = document.createElement("script");
+      script.src = loaderUrl;
+      script.onload = function () {
+        createUnityInstance(canvas, config, function (progress) {
+          document.querySelector("#bar-fill").style.width = Math.round(100 * progress) + "%";
+          if (progress >= 0.9) document.querySelector("#loading-note").textContent = "Sắp xong rồi…";
+        }).then(function (unityInstance) {
+          var loading = document.querySelector("#loading");
+          loading.classList.add("done");
+          setTimeout(function () { loading.style.display = "none"; offerFullscreen(); }, 450);
+        }).catch(function (message) {
+          showBanner("Không tải được game: " + message, "error");
+        });
+      };
+      script.onerror = function () { showBanner("Không tải được game. Kiểm tra mạng rồi tải lại trang.", "error"); };
+      document.body.appendChild(script);
+    </script>
+  </body>
+</html>
