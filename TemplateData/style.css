@@ -1,0 +1,310 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #3e9fe0;
+  font-family: "Baloo 2", "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+}
+
+#unity-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: linear-gradient(#3e9fe0, #ddf3fd);
+  outline: none;
+}
+
+/* ---- loading: the start screen's sky, the app icon, a green pill bar ---- */
+#loading {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background:
+    radial-gradient(ellipse 60% 45% at 50% 108%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 70%),
+    linear-gradient(#3e9fe0 0%, #7fccef 55%, #ddf3fd 100%);
+  transition: opacity 0.45s ease;
+}
+#loading.done { opacity: 0; pointer-events: none; }
+
+#loading-icon {
+  width: min(22vmin, 150px);
+  height: auto;
+  border-radius: 24%;
+  box-shadow: 0 10px 30px rgba(20, 60, 110, 0.35);
+  animation: bob 2.4s ease-in-out infinite;
+}
+@keyframes bob { 50% { transform: translateY(-8px); } }
+
+#loading-title {
+  margin-top: 6px;
+  font-size: min(9vmin, 58px);
+  font-weight: 800;
+  color: #ffd45a;
+  -webkit-text-stroke: 2px #8a4a0c;
+  text-shadow: 0 5px 0 rgba(20, 50, 90, 0.28);
+  letter-spacing: 0.5px;
+}
+
+#bar {
+  width: min(60vmin, 360px);
+  height: 18px;
+  margin-top: 14px;
+  border-radius: 999px;
+  background: rgba(20, 60, 90, 0.25);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+#bar-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(#7fe39a, #2fa956);
+  transition: width 0.25s ease;
+}
+#loading-note {
+  font-size: min(3.4vmin, 17px);
+  font-weight: 600;
+  color: #2a5a7a;
+}
+
+/* ---- phones held upright ---- */
+#rotate {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: linear-gradient(#3e9fe0, #7fccef);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  padding: 24px;
+  z-index: 10;
+}
+.rotate-phone {
+  width: 54px;
+  height: 90px;
+  border: 5px solid #fff;
+  border-radius: 12px;
+  animation: turn 1.8s ease-in-out infinite;
+}
+@keyframes turn { 0%, 30% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
+@media (orientation: portrait) {
+  body.mobile #rotate { display: flex; }
+}
+
+/* ---- full screen offer (phones) and the iPhone home-screen hint ---- */
+#fs-prompt, #ios-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(16, 40, 60, 0.45);
+  z-index: 12;                      /* above the rotate hint: going full screen also turns the phone */
+}
+#fs-prompt[hidden], #ios-hint[hidden] { display: none; }
+
+.fs-card {
+  width: min(86vw, 360px);
+  box-sizing: border-box;
+  padding: 18px 22px 14px;
+  border-radius: 22px;
+  background: linear-gradient(#fffaf0, #f6ead3);
+  border: 3px solid #e3c48f;
+  box-shadow: 0 12px 30px rgba(10, 30, 50, 0.35);
+  color: #3b2a1a;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.fs-title { font-size: 21px; font-weight: 800; line-height: 1.45; }
+.fs-text { font-size: 15px; font-weight: 600; line-height: 1.5; color: #6b5a45; }
+
+.fs-glyph { position: relative; width: 40px; height: 40px; margin-bottom: 2px; }
+.fs-glyph span { position: absolute; width: 13px; height: 13px; border: 0 solid #2f9a55; border-radius: 3px; }
+.fs-glyph span:nth-child(1) { left: 0; top: 0; border-left-width: 5px; border-top-width: 5px; }
+.fs-glyph span:nth-child(2) { right: 0; top: 0; border-right-width: 5px; border-top-width: 5px; }
+.fs-glyph span:nth-child(3) { left: 0; bottom: 0; border-left-width: 5px; border-bottom-width: 5px; }
+.fs-glyph span:nth-child(4) { right: 0; bottom: 0; border-right-width: 5px; border-bottom-width: 5px; }
+
+#fs-go, #ios-ok {
+  margin-top: 6px;
+  width: 100%;
+  min-height: 48px;
+  font: inherit;
+  font-size: 19px;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 2px 0 rgba(20, 90, 45, 0.6);
+  background: linear-gradient(#6ad889, #2f9a55);
+  border: 2px solid #1f7040;
+  border-bottom-width: 5px;
+  border-radius: 999px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+#fs-go:active, #ios-ok:active { border-bottom-width: 2px; transform: translateY(3px); }
+.fs-link {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  color: #8a7760;
+  background: none;
+  border: 0;
+  padding: 8px 16px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#error {
+  position: absolute;
+  left: 50%;
+  top: 16px;
+  transform: translateX(-50%);
+  max-width: 90%;
+  background: #b03a31;
+  color: #fff;
+  font-weight: 700;
+  padding: 10px 16px;
+  border-radius: 12px;
+  z-index: 20;
+}
+
+/* ---- event looks: <html data-landing="moon|festival">, set by index.html from TemplateData/landing-theme.js before the first paint.
+        The everyday page never matches any rule below. Colours come from the game (--lp-*, TemplateData/landing.js). ---- */
+html[data-landing] #loading > #loading-icon,
+html[data-landing] #loading > #loading-title,
+html[data-landing] #loading > #bar,
+html[data-landing] #loading > #loading-note { position: relative; z-index: 1; }
+
+#lp-sky { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+
+#lp-chip {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 18px 4px 8px;
+  border-radius: 999px;
+  background: linear-gradient(var(--lp-ribbonTop, #e4553f), var(--lp-ribbonBottom, #b32a22));
+  box-shadow: 0 4px 0 var(--lp-ribbonLip, #6e1812), 0 9px 18px rgba(0, 0, 0, 0.28), inset 0 2px 0 rgba(255, 217, 168, 0.5);
+  color: var(--lp-ribbonInk, #fff4dc);
+  font-size: min(3.6vmin, 19px);
+  font-weight: 800;
+  line-height: 1.45;
+  white-space: nowrap;
+  text-shadow: 1.5px 1.5px 0 var(--lp-ribbonLine, #6a1510), -1px -1px 0 var(--lp-ribbonLine, #6a1510),
+               1.5px -1px 0 var(--lp-ribbonLine, #6a1510), -1px 1.5px 0 var(--lp-ribbonLine, #6a1510);
+}
+#lp-chip { max-width: calc(100vw - 24px); box-sizing: border-box; }
+#lp-chip img { width: 1.7em; height: 1.7em; object-fit: contain; flex: none; }
+#lp-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* Hội Trăng Rằm: the game's own night (DayCycle's night key), the event moon, sky lanterns rising, lanterns hung from the top */
+html[data-landing="moon"], html[data-landing="moon"] body { background: var(--lp-skyTop, #0b1433); }
+html[data-landing="moon"] #unity-canvas { background: linear-gradient(var(--lp-skyTop, #0b1433), var(--lp-skyHor, #3f5a8e)); }
+html[data-landing="moon"] #loading {
+  background: linear-gradient(var(--lp-skyTop, #0b1433) 0%, var(--lp-skyMid, #172556) 40%, var(--lp-skyLow, #2a3e73) 70%, var(--lp-skyHor, #3f5a8e) 100%);
+}
+html[data-landing="moon"] #lp-sky::after {
+  content: "";
+  position: absolute;
+  left: -10%; right: -10%; bottom: -12%; height: 48%;
+  background: radial-gradient(ellipse 60% 52% at 50% 100%, var(--lp-cloud, #8c9fd2) 0%, rgba(140, 159, 210, 0) 72%);
+  opacity: 0.8;
+}
+html[data-landing="moon"] #loading-title { text-shadow: 0 5px 0 rgba(4, 8, 30, 0.45), 0 0 28px rgba(255, 210, 122, 0.35); }
+html[data-landing="moon"] #loading-icon { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 0 36px rgba(255, 200, 110, 0.35); }
+html[data-landing="moon"] #loading-note { color: #d8e2ff; }
+html[data-landing="moon"] #bar { background: rgba(255, 255, 255, 0.16); }
+html[data-landing="moon"] #rotate { background: linear-gradient(var(--lp-skyTop, #0b1433), var(--lp-skyLow, #2a3e73)); }
+
+.lp-star {
+  position: absolute;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 6px 1px rgba(207, 224, 255, 0.75);
+  animation: lp-twinkle ease-in-out infinite alternate;
+}
+@keyframes lp-twinkle { from { transform: scale(0.5); } to { transform: scale(1); } }
+
+.lp-moonbox { position: absolute; right: 9vw; top: 8vh; width: min(30vmin, 300px); }
+.lp-moon { position: relative; display: block; width: 100%; height: auto; animation: lp-moonglow 7s ease-in-out infinite alternate; }
+/* đêm rằm: the moon at its biggest, as in the game (SkyView.MoonRamScale) */
+html[data-moon="ram"] .lp-moonbox { right: 7.5vw; top: 6vh; width: min(36vmin, 360px); }
+.lp-moon-halo {
+  position: absolute;
+  inset: -70%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 210, 122, 0.42) 0%, rgba(255, 210, 122, 0.14) 45%, rgba(255, 210, 122, 0));
+}
+@keyframes lp-moonglow {
+  from { filter: drop-shadow(0 0 16px rgba(255, 210, 122, 0.45)); }
+  to { filter: drop-shadow(0 0 30px rgba(255, 210, 122, 0.7)); }
+}
+
+.lp-rise {
+  position: absolute;
+  bottom: -14vh;
+  height: auto;
+  opacity: 0;
+  filter: drop-shadow(0 0 7px rgba(255, 165, 70, 0.85));
+  animation: lp-rise linear infinite;
+  will-change: transform, opacity;
+}
+@keyframes lp-rise {
+  0% { transform: translate(0, 0) scale(1); opacity: 0; }
+  8% { opacity: 0.95; }
+  78% { opacity: 0.85; }
+  100% { transform: translate(var(--lp-dx, 4vw), -120vh) scale(0.7); opacity: 0; }
+}
+
+.lp-hang { position: absolute; top: 0; transform-origin: 50% 0; animation: lp-sway ease-in-out infinite alternate; }
+.lp-cord { width: 2px; margin: 0 auto; background: #4a2a14; }
+.lp-lantern { position: relative; margin-top: -2px; }
+.lp-hang-art { position: relative; display: block; width: 100%; height: auto; }
+.lp-hang-glow {
+  position: absolute;
+  inset: -40% -80% -25%;
+  background: radial-gradient(closest-side, rgba(255, 190, 100, 0.5), rgba(255, 190, 100, 0.18) 55%, rgba(255, 190, 100, 0));
+  animation: lp-flicker 1.7s ease-in-out infinite alternate;
+}
+@keyframes lp-sway { from { transform: rotate(-3.5deg); } to { transform: rotate(3.5deg); } }
+@keyframes lp-flicker { from { opacity: 0.75; } to { opacity: 1; } }
+
+/* the weekend's Lễ hội Làng Mây: the map's balloons over the everyday sky */
+.lp-drift { position: absolute; left: -10vw; height: auto; animation: lp-drift linear infinite; will-change: transform; }
+@keyframes lp-drift { from { transform: translateX(0); } to { transform: translateX(122vw); } }
+html[data-landing="festival"] #lp-chip { text-shadow: 1.5px 1.5px 0 var(--lp-ribbonLine, #1c5e33), -1px -1px 0 var(--lp-ribbonLine, #1c5e33),
+                                          1.5px -1px 0 var(--lp-ribbonLine, #1c5e33), -1px 1.5px 0 var(--lp-ribbonLine, #1c5e33); }
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-star, .lp-moon, .lp-hang, .lp-hang-glow, .lp-drift { animation: none; }
+  .lp-rise { display: none; }
+}
